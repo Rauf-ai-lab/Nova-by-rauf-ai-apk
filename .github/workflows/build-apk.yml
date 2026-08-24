@@ -146,7 +146,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh --version
-          
+
           ASSET_PATH="${{ steps.prepare_asset.outputs.asset_path }}"
           ASSET_NAME="${{ steps.prepare_asset.outputs.asset_name }}"
           TAG_NAME="debug-apk-build-${{ github.run_number }}-${{ github.run_attempt }}"
@@ -166,23 +166,29 @@ jobs:
               ;;
           esac
 
-          RELEASE_NOTES="### Automated Debug APK Build
+          NOTES_FILE="${{ runner.temp }}/release_notes.md"
+          cat << 'EOF' > "$NOTES_FILE"
+          ### Automated Debug APK Build
 
-This is an automatically generated debug APK built by GitHub Actions.
+          This is an automatically generated debug APK built by GitHub Actions.
 
-- **Workflow Run Number:** #${{ github.run_number }}
-- **Workflow Run Attempt:** ${{ github.run_attempt }}
-- **Source Commit SHA:** \`${TARGET_SHA}\`
-- **Asset Filename:** \`${ASSET_NAME}\`
+          - **Workflow Run Number:** #${{ github.run_number }}
+          - **Workflow Run Attempt:** ${{ github.run_attempt }}
+          - **Source Commit SHA:** `${{ github.sha }}`
+          - **Asset Filename:** `${{ steps.prepare_asset.outputs.asset_name }}`
 
-> ⚠️ **Notice:** This APK is intended for testing and development purposes. It is signed with a temporary debug keystore and is not a Play Store production release."
+          > ⚠️ **Notice:** This APK is intended for testing and development purposes. It is signed with a temporary debug keystore and is not a Play Store production release.
+          EOF
+
+          # Remove leading indentation from notes file
+          sed -i 's/^[[:space:]]\{10\}//' "$NOTES_FILE"
 
           echo "Creating GitHub Release with tag: $TAG_NAME"
           gh release create "$TAG_NAME" \
             "$ASSET_PATH" \
             --target "$TARGET_SHA" \
             --title "$RELEASE_TITLE" \
-            --notes "$RELEASE_NOTES" \
+            --notes-file "$NOTES_FILE" \
             --latest
 
       - name: Report APK download result
