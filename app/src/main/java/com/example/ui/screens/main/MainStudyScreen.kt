@@ -7,15 +7,14 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -24,9 +23,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -34,24 +32,23 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Calculate
-import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.ElectricBolt
-import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SportsEsports
-import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Style
-import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.outlined.Lightbulb
 import androidx.compose.material.icons.outlined.Psychology
-import androidx.compose.material.icons.outlined.RecordVoiceOver
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
@@ -65,32 +62,28 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.example.ai.LiveSessionManager
+import com.example.domain.model.ChatMessage
 import com.example.domain.model.Speaker
 import com.example.domain.model.StudyMode
 import com.example.domain.model.ZoyaState
 import com.example.domain.repository.StudyRepository
-import com.example.service.ZoyaLiveVoiceService
 import com.example.ui.components.GlassmorphicCard
-import com.example.ui.components.StudyTopBar
 import com.example.ui.components.WaveformVisualizer
-import com.example.ui.components.ZoyaOrbView
 import com.example.ui.theme.NovaBorderGlow
 import com.example.ui.theme.NovaCardGlass
 import com.example.ui.theme.NovaDarkElevated
@@ -105,7 +98,6 @@ import com.example.ui.theme.ZoyaAmberGlass
 import com.example.ui.theme.ZoyaCoral
 import com.example.ui.theme.ZoyaCyan
 import com.example.ui.theme.ZoyaCyanBright
-import com.example.ui.theme.ZoyaCyanDeep
 import com.example.ui.theme.ZoyaCyanGlass
 import com.example.ui.theme.ZoyaCyanGlow
 import com.example.ui.theme.ZoyaElectricBlue
@@ -124,6 +116,7 @@ data class StudyModeCardItem(
     val iconTint: Color
 )
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun MainStudyScreen(
     liveSessionManager: LiveSessionManager,
@@ -134,11 +127,13 @@ fun MainStudyScreen(
     val context = LocalContext.current
     val zoyaState by liveSessionManager.zoyaState.collectAsState()
     val chatTranscript by liveSessionManager.chatTranscript.collectAsState()
-    val isLiveActive by liveSessionManager.isLiveSessionActive.collectAsState()
+    val studentProfile by repository.studentProfile.collectAsState()
+    val isListening by liveSessionManager.speechInput.isListening.collectAsState()
+    val recognizedSpeechText by liveSessionManager.speechInput.partialTranscript.collectAsState()
 
     var textInput by remember { mutableStateOf("") }
-    var isTextInputVisible by remember { mutableStateOf(false) }
     val focusManager = LocalFocusManager.current
+    val clipboardManager = LocalClipboardManager.current
     val scrollState = rememberScrollState()
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -147,7 +142,6 @@ fun MainStudyScreen(
         val recordAudioGranted = permissions[Manifest.permission.RECORD_AUDIO] == true
         if (recordAudioGranted) {
             liveSessionManager.toggleMicrophone(true)
-            ZoyaLiveVoiceService.start(context)
         }
     }
 
@@ -159,482 +153,519 @@ fun MainStudyScreen(
 
         if (!hasAudioPerm) {
             permissionLauncher.launch(arrayOf(Manifest.permission.RECORD_AUDIO))
-            return
-        }
-
-        if (zoyaState is ZoyaState.Speaking) {
-            // Barge-in interruption
-            liveSessionManager.handleBargeInInterruption()
-        } else if (zoyaState is ZoyaState.Listening) {
-            liveSessionManager.toggleMicrophone(false)
         } else {
-            if (!isLiveActive) {
-                liveSessionManager.startLiveSession()
-            }
-            liveSessionManager.toggleMicrophone(true)
-            ZoyaLiveVoiceService.start(context)
+            liveSessionManager.toggleMicrophone()
         }
     }
 
-    val studyCards = listOf(
-        StudyModeCardItem(
-            mode = StudyMode.QuizArena,
-            title = "Quiz Generator",
-            subtitle = "MC • True/False • Blanks • Short",
-            icon = Icons.Default.SportsEsports,
-            iconBgColor = ZoyaPurpleGlass,
-            iconTint = ZoyaVioletBright
-        ),
-        StudyModeCardItem(
-            mode = StudyMode.FlashcardDeck,
-            title = "Flashcards",
-            subtitle = "Spaced Repetition • 3D Flip",
-            icon = Icons.Default.Style,
-            iconBgColor = ZoyaCyanGlass,
-            iconTint = ZoyaCyan
-        ),
-        StudyModeCardItem(
-            mode = StudyMode.ConceptExplainer,
-            title = "Concept Explainer",
-            subtitle = "Breakdowns & Analogies",
-            icon = Icons.Outlined.Lightbulb,
-            iconBgColor = ZoyaAmberGlass,
-            iconTint = ZoyaAmber
-        ),
-        StudyModeCardItem(
-            mode = StudyMode.StepByStepSolver,
-            title = "Step-by-Step Solver",
-            subtitle = "Math & Physics with 'Why'",
-            icon = Icons.Default.Calculate,
-            iconBgColor = ZoyaEmeraldGlass,
-            iconTint = ZoyaEmerald
-        )
-    )
+    fun handleSend() {
+        val message = textInput.ifBlank { recognizedSpeechText }
+        if (message.isNotBlank()) {
+            liveSessionManager.sendTextQuestion(message)
+            textInput = ""
+            focusManager.clearFocus()
+        }
+    }
 
-    Surface(
-        modifier = modifier.fillMaxSize(),
-        color = NovaObsidian
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(NovaObsidian)
     ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .background(NovaObsidian)
+                .verticalScroll(scrollState)
+                .padding(bottom = 24.dp)
         ) {
-            // Top Header: NOVA BY RAUF | Study Assistant | Settings
-            StudyTopBar(
-                onSettingsClick = { onNavigateMode(StudyMode.Settings) },
-                state = zoyaState,
-                title = "Study Assistant"
-            )
-
-            // Center Scrollable Body
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .verticalScroll(scrollState)
-                    .padding(horizontal = 24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.SpaceBetween
-            ) {
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // Hero Area: Orb & Atmospheric Glow
-                Box(
-                    modifier = Modifier.fillMaxWidth(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    ZoyaOrbView(
-                        state = zoyaState,
-                        size = 250.dp,
-                        onClick = { handleMicClick() }
-                    )
-                }
-
-                // Monologue & State Headline
-                val lastZoyaMsg = chatTranscript.lastOrNull { it.sender == Speaker.ZOYA }?.text
-                val stateTitle = when (zoyaState) {
-                    is ZoyaState.Listening -> "Zoya is listening..."
-                    is ZoyaState.Thinking -> "Zoya is thinking..."
-                    is ZoyaState.Speaking -> "Zoya is speaking..."
-                    is ZoyaState.Error -> "Connection Alert"
-                    is ZoyaState.Disconnected -> "Zoya is in standby"
-                    else -> "Zoya is ready"
-                }
-
-                val quoteText = when {
-                    zoyaState is ZoyaState.Listening -> "\"Speak naturally. I'm ready to explain, solve, or drill any topic.\""
-                    zoyaState is ZoyaState.Thinking -> "\"Connecting intuitive concepts and formulating step-by-step guidance...\""
-                    lastZoyaMsg != null -> "\"$lastZoyaMsg\""
-                    else -> "\"Wait. Don't memorize it yet. First understand why it works.\""
-                }
-
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 16.dp, bottom = 20.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        text = stateTitle,
-                        style = MaterialTheme.typography.headlineSmall.copy(
-                            fontWeight = FontWeight.Light,
-                            color = TextPrimary,
-                            fontSize = 22.sp,
-                            letterSpacing = 0.5.sp
-                        ),
-                        textAlign = TextAlign.Center
-                    )
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Text(
-                        text = quoteText,
-                        style = MaterialTheme.typography.bodyMedium.copy(
-                            color = TextCyanSub,
-                            fontStyle = FontStyle.Italic,
-                            fontSize = 13.5.sp,
-                            lineHeight = 19.sp,
-                            letterSpacing = (-0.1).sp
-                        ),
-                        textAlign = TextAlign.Center,
-                        maxLines = 3,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-
-                // Accelerators Grid Cards
-                Column(
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(
-                        text = "STUDY ACCELERATORS",
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            color = TextMuted,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 1.8.sp,
-                            fontSize = 10.sp
-                        )
-                    )
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    // 2x2 Grid of Accelerators
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        for (i in 0..1) {
-                            val card = studyCards[i]
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .testTag("study_card_${card.mode.name}")
-                                    .clip(RoundedCornerShape(24.dp))
-                                    .background(NovaCardGlass)
-                                    .border(1.dp, NovaBorderGlow, RoundedCornerShape(24.dp))
-                                    .clickable { onNavigateMode(card.mode) }
-                                    .padding(16.dp)
-                                    .height(112.dp)
-                            ) {
-                                Column(
-                                    modifier = Modifier.fillMaxSize(),
-                                    verticalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(32.dp)
-                                            .clip(RoundedCornerShape(10.dp))
-                                            .background(card.iconBgColor),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Icon(
-                                            imageVector = card.icon,
-                                            contentDescription = null,
-                                            tint = card.iconTint,
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                    }
-                                    Column {
-                                        Text(
-                                            text = card.title,
-                                            style = MaterialTheme.typography.titleSmall.copy(
-                                                fontWeight = FontWeight.Medium,
-                                                color = TextPrimary,
-                                                fontSize = 13.5.sp
-                                            ),
-                                            maxLines = 1
-                                        )
-                                        Spacer(modifier = Modifier.height(2.dp))
-                                        Text(
-                                            text = card.subtitle,
-                                            style = MaterialTheme.typography.labelSmall.copy(
-                                                color = TextMuted,
-                                                fontSize = 9.5.sp,
-                                                letterSpacing = 0.5.sp
-                                            ),
-                                            maxLines = 1
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        for (i in 2..3) {
-                            val card = studyCards[i]
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .testTag("study_card_${card.mode.name}")
-                                    .clip(RoundedCornerShape(24.dp))
-                                    .background(NovaCardGlass)
-                                    .border(1.dp, NovaBorderGlow, RoundedCornerShape(24.dp))
-                                    .clickable { onNavigateMode(card.mode) }
-                                    .padding(16.dp)
-                                    .height(112.dp)
-                            ) {
-                                Column(
-                                    modifier = Modifier.fillMaxSize(),
-                                    verticalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(32.dp)
-                                            .clip(RoundedCornerShape(10.dp))
-                                            .background(card.iconBgColor),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Icon(
-                                            imageVector = card.icon,
-                                            contentDescription = null,
-                                            tint = card.iconTint,
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                    }
-                                    Column {
-                                        Text(
-                                            text = card.title,
-                                            style = MaterialTheme.typography.titleSmall.copy(
-                                                fontWeight = FontWeight.Medium,
-                                                color = TextPrimary,
-                                                fontSize = 13.5.sp
-                                            ),
-                                            maxLines = 1
-                                        )
-                                        Spacer(modifier = Modifier.height(2.dp))
-                                        Text(
-                                            text = card.subtitle,
-                                            style = MaterialTheme.typography.labelSmall.copy(
-                                                color = TextMuted,
-                                                fontSize = 9.5.sp,
-                                                letterSpacing = 0.5.sp
-                                            ),
-                                            maxLines = 1
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-            }
-
-            // Quick Text Input Drawer (Expandable)
-            AnimatedVisibility(
-                visible = isTextInputVisible,
-                enter = slideInVertically { it } + fadeIn(),
-                exit = slideOutVertically { it } + fadeOut()
-            ) {
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    color = NovaDarkElevated
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        OutlinedTextField(
-                            value = textInput,
-                            onValueChange = { textInput = it },
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("main_text_question_input"),
-                            placeholder = {
-                                Text(
-                                    text = "Ask Zoya any study question...",
-                                    color = TextMuted,
-                                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp)
-                                )
-                            },
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = ZoyaCyan,
-                                unfocusedBorderColor = NovaBorderGlow,
-                                focusedContainerColor = NovaDarkSurface,
-                                unfocusedContainerColor = NovaDarkSurface,
-                                focusedTextColor = TextPrimary,
-                                unfocusedTextColor = TextPrimary
-                            ),
-                            shape = RoundedCornerShape(20.dp),
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                            keyboardActions = KeyboardActions(
-                                onSend = {
-                                    if (textInput.isNotBlank()) {
-                                        liveSessionManager.sendTextQuestion(textInput)
-                                        textInput = ""
-                                        focusManager.clearFocus()
-                                    }
-                                }
-                            )
-                        )
-
-                        Spacer(modifier = Modifier.width(8.dp))
-
-                        IconButton(
-                            onClick = {
-                                if (textInput.isNotBlank()) {
-                                    liveSessionManager.sendTextQuestion(textInput)
-                                    textInput = ""
-                                    focusManager.clearFocus()
-                                }
-                            },
-                            modifier = Modifier
-                                .testTag("send_question_btn")
-                                .size(44.dp)
-                                .clip(CircleShape)
-                                .background(ZoyaCyan)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Send,
-                                contentDescription = "Send",
-                                tint = Color.Black,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-                    }
-                }
-            }
-
-            // Bottom Navigation Pill Bar (Floating Capsule Style)
-            Box(
+            // TOP HEADER
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 24.dp, vertical = 12.dp),
-                contentAlignment = Alignment.Center
+                    .padding(horizontal = 20.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Surface(
+                Column {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "NOVA",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Black,
+                            color = TextPrimary,
+                            letterSpacing = 1.5.sp
+                        )
+                        Text(
+                            text = " BY RAUF",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = ZoyaCyanBright
+                        )
+                    }
+                    Text(
+                        text = "AI Study Companion: ZOYA",
+                        fontSize = 11.sp,
+                        color = TextSecondary
+                    )
+                }
+
+                IconButton(
+                    onClick = { onNavigateMode(StudyMode.Settings) },
+                    modifier = Modifier
+                        .size(40.dp)
+                        .background(NovaDarkElevated, CircleShape)
+                        .testTag("settings_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Settings,
+                        contentDescription = "Settings",
+                        tint = TextSecondary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+
+            // STUDENT PROFILE BOARD BADGE
+            Box(modifier = Modifier.padding(horizontal = 20.dp)) {
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(40.dp))
-                        .border(1.dp, NovaBorderGlow, RoundedCornerShape(40.dp)),
-                    color = NovaCardGlass,
-                    shape = RoundedCornerShape(40.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(ZoyaCyanGlass)
+                        .border(1.dp, ZoyaCyanGlow, RoundedCornerShape(14.dp))
+                        .clickable { onNavigateMode(StudyMode.YourBoard) }
+                        .padding(horizontal = 14.dp, vertical = 10.dp)
+                        .testTag("board_badge")
                 ) {
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                        modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Explainer Shortcut
-                        IconButton(
-                            onClick = { onNavigateMode(StudyMode.ConceptExplainer) },
-                            modifier = Modifier.size(40.dp)
-                        ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
-                                imageVector = Icons.Outlined.Lightbulb,
-                                contentDescription = "Explain",
-                                tint = TextSecondary,
-                                modifier = Modifier.size(20.dp)
+                                imageVector = Icons.Default.School,
+                                contentDescription = "Board",
+                                tint = ZoyaCyanBright,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "${studentProfile.boardName} • ${studentProfile.classLevel} • ${studentProfile.subject}",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = TextPrimary
                             )
                         }
+                        Text(
+                            text = "Your Board →",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = ZoyaCyanBright
+                        )
+                    }
+                }
+            }
 
-                        // Flashcards Shortcut
-                        IconButton(
-                            onClick = { onNavigateMode(StudyMode.FlashcardDeck) },
-                            modifier = Modifier.size(40.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Style,
-                                contentDescription = "Flashcards",
-                                tint = TextSecondary,
-                                modifier = Modifier.size(20.dp)
-                            )
+            Spacer(modifier = Modifier.height(18.dp))
+
+            // MAIN GREETING
+            Column(modifier = Modifier.padding(horizontal = 20.dp)) {
+                Text(
+                    text = "Ready to learn?",
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.Black,
+                    color = TextPrimary
+                )
+                Text(
+                    text = "Ask any doubt, concept, formula, or problem.",
+                    fontSize = 13.sp,
+                    color = TextSecondary
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // QUESTION INPUT BAR (Voice Input -> Text Output)
+            Box(modifier = Modifier.padding(horizontal = 20.dp)) {
+                GlassmorphicCard(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.dp, if (isListening) ZoyaCyanBright else NovaBorderGlow, RoundedCornerShape(20.dp))
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        if (isListening) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(bottom = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(8.dp)
+                                        .background(ZoyaCoral, CircleShape)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Listening to your voice...",
+                                    fontSize = 12.sp,
+                                    color = ZoyaCyanBright,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
                         }
 
-                        // Center Live Mic Orb Trigger (Cyan Glow Pill)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedTextField(
+                                value = if (isListening && recognizedSpeechText.isNotBlank()) recognizedSpeechText else textInput,
+                                onValueChange = { textInput = it },
+                                placeholder = {
+                                    Text(
+                                        "Ask Zoya a question, concept or homework doubt...",
+                                        fontSize = 13.sp,
+                                        color = TextMuted
+                                    )
+                                },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("question_input_field"),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = Color.Transparent,
+                                    unfocusedBorderColor = Color.Transparent,
+                                    focusedTextColor = TextPrimary,
+                                    unfocusedTextColor = TextPrimary
+                                ),
+                                singleLine = false,
+                                maxLines = 4,
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                                keyboardActions = KeyboardActions(onSend = { handleSend() })
+                            )
+
+                            // Mic Button
+                            IconButton(
+                                onClick = { handleMicClick() },
+                                modifier = Modifier
+                                    .size(42.dp)
+                                    .background(if (isListening) ZoyaCoral else ZoyaPurpleGlass, CircleShape)
+                                    .border(1.dp, if (isListening) ZoyaCoral else ZoyaViolet, CircleShape)
+                                    .testTag("voice_input_mic_button")
+                            ) {
+                                Icon(
+                                    imageVector = if (isListening) Icons.Default.MicOff else Icons.Default.Mic,
+                                    contentDescription = "Voice Input",
+                                    tint = if (isListening) Color.White else ZoyaVioletBright,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.width(6.dp))
+
+                            // Send Button
+                            IconButton(
+                                onClick = { handleSend() },
+                                enabled = textInput.isNotBlank() || recognizedSpeechText.isNotBlank(),
+                                modifier = Modifier
+                                    .size(42.dp)
+                                    .background(ZoyaCyan, CircleShape)
+                                    .testTag("send_question_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Send,
+                                    contentDescription = "Send",
+                                    tint = NovaObsidian,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // THINKING STATE
+            if (zoyaState is ZoyaState.Thinking) {
+                Spacer(modifier = Modifier.height(14.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        color = ZoyaCyanBright,
+                        strokeWidth = 2.dp
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = "Zoya is analyzing your question for ${studentProfile.boardName}...",
+                        fontSize = 12.sp,
+                        color = TextCyanSub
+                    )
+                }
+            }
+
+            // CHAT CONVERSATION LOG (Voice Input -> Text Output)
+            if (chatTranscript.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(16.dp))
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    chatTranscript.takeLast(4).forEach { msg ->
+                        ChatBubbleItem(
+                            message = msg,
+                            onCopy = { clipboardManager.setText(AnnotatedString(msg.text)) },
+                            onSpeak = { liveSessionManager.audioPlayback.speakText(msg.text) }
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // PROMINENT "YOUR BOARD" BANNER
+            Box(modifier = Modifier.padding(horizontal = 20.dp)) {
+                GlassmorphicCard(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.dp, Brush.horizontalGradient(listOf(ZoyaCyanBright, ZoyaVioletBright)), RoundedCornerShape(20.dp))
+                        .clickable { onNavigateMode(StudyMode.YourBoard) }
+                        .testTag("your_board_dashboard_banner")
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(18.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Box(
                             modifier = Modifier
-                                .testTag("main_mic_button")
                                 .size(52.dp)
-                                .clip(CircleShape)
-                                .background(
-                                    when (zoyaState) {
-                                        is ZoyaState.Speaking -> Brush.radialGradient(listOf(ZoyaCoral, Color(0xFF991B1B)))
-                                        is ZoyaState.Listening -> Brush.radialGradient(listOf(ZoyaCyanBright, ZoyaCyan))
-                                        else -> Brush.radialGradient(listOf(ZoyaCyan, ZoyaCyanDeep))
-                                    }
-                                )
-                                .border(
-                                    1.5.dp,
-                                    if (zoyaState is ZoyaState.Listening) ZoyaCyanBright else Color.White.copy(alpha = 0.2f),
-                                    CircleShape
-                                )
-                                .clickable { handleMicClick() },
+                                .background(ZoyaCyanGlass, RoundedCornerShape(14.dp))
+                                .border(1.dp, ZoyaCyanGlow, RoundedCornerShape(14.dp)),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                imageVector = when (zoyaState) {
-                                    is ZoyaState.Speaking -> Icons.Default.Stop
-                                    is ZoyaState.Listening -> Icons.Default.Mic
-                                    else -> Icons.Default.Mic
-                                },
-                                contentDescription = "Voice Assistant",
-                                tint = if (zoyaState is ZoyaState.Speaking) Color.White else Color.Black,
-                                modifier = Modifier.size(24.dp)
+                                imageVector = Icons.Default.School,
+                                contentDescription = "Board",
+                                tint = ZoyaCyanBright,
+                                modifier = Modifier.size(28.dp)
                             )
                         }
-
-                        // Quiz Arena Shortcut
-                        IconButton(
-                            onClick = { onNavigateMode(StudyMode.QuizArena) },
-                            modifier = Modifier.size(40.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.SportsEsports,
-                                contentDescription = "Quiz Arena",
-                                tint = TextSecondary,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-
-                        // Toggle Text Prompt Bar
-                        IconButton(
-                            onClick = { isTextInputVisible = !isTextInputVisible },
-                            modifier = Modifier.size(40.dp)
-                        ) {
-                            Icon(
-                                imageVector = if (isTextInputVisible) Icons.Default.Close else Icons.Default.Keyboard,
-                                contentDescription = "Toggle Keyboard",
-                                tint = if (isTextInputVisible) ZoyaCyan else TextSecondary,
-                                modifier = Modifier.size(20.dp)
+                        Spacer(modifier = Modifier.width(14.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = "YOUR BOARD",
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Black,
+                                    color = TextPrimary
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "DASHBOARD",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = ZoyaCyanBright
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "Your study space, built around your board (${studentProfile.boardName} ${studentProfile.classLevel})",
+                                fontSize = 12.sp,
+                                color = TextSecondary,
+                                lineHeight = 16.sp
                             )
                         }
                     }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // QUICK STUDY MODULES
+            Column(modifier = Modifier.padding(horizontal = 20.dp)) {
+                Text(
+                    text = "STUDY MODES",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = TextMuted,
+                    letterSpacing = 1.sp
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+
+                val quickModes = listOf(
+                    StudyModeCardItem(
+                        mode = StudyMode.OneShotLecture,
+                        title = "One-Shot Lectures",
+                        subtitle = "Master full chapter in 14 steps",
+                        icon = Icons.Default.ElectricBolt,
+                        iconBgColor = ZoyaPurpleGlass,
+                        iconTint = ZoyaVioletBright
+                    ),
+                    StudyModeCardItem(
+                        mode = StudyMode.QuizArena,
+                        title = "Quiz Arena",
+                        subtitle = "Instant score & mistake analysis",
+                        icon = Icons.Default.SportsEsports,
+                        iconBgColor = ZoyaCyanGlass,
+                        iconTint = ZoyaCyanBright
+                    ),
+                    StudyModeCardItem(
+                        mode = StudyMode.ConceptExplainer,
+                        title = "Concept Explainer",
+                        subtitle = "Intuitive analogical breakdowns",
+                        icon = Icons.Outlined.Lightbulb,
+                        iconBgColor = ZoyaEmeraldGlass,
+                        iconTint = ZoyaEmerald
+                    ),
+                    StudyModeCardItem(
+                        mode = StudyMode.StepByStepSolver,
+                        title = "Step-by-Step Solver",
+                        subtitle = "Clear mathematical working",
+                        icon = Icons.Default.Calculate,
+                        iconBgColor = ZoyaAmberGlass,
+                        iconTint = ZoyaAmber
+                    ),
+                    StudyModeCardItem(
+                        mode = StudyMode.FlashcardDeck,
+                        title = "Active Flashcards",
+                        subtitle = "Spaced repetition term review",
+                        icon = Icons.Default.Style,
+                        iconBgColor = ZoyaPurpleGlass,
+                        iconTint = ZoyaVioletBright
+                    ),
+                    StudyModeCardItem(
+                        mode = StudyMode.QuickRevision,
+                        title = "Rapid Revision",
+                        subtitle = "High-yield formulas & facts",
+                        icon = Icons.Default.AutoAwesome,
+                        iconBgColor = ZoyaCyanGlass,
+                        iconTint = ZoyaCyanBright
+                    )
+                )
+
+                quickModes.chunked(2).forEach { rowItems ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        rowItems.forEach { item ->
+                            Box(modifier = Modifier.weight(1f)) {
+                                GlassmorphicCard(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(120.dp)
+                                        .border(1.dp, NovaBorderGlow, RoundedCornerShape(16.dp))
+                                        .clickable { onNavigateMode(item.mode) }
+                                ) {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .padding(14.dp),
+                                        verticalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(36.dp)
+                                                .background(item.iconBgColor, RoundedCornerShape(10.dp)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = item.icon,
+                                                contentDescription = item.title,
+                                                tint = item.iconTint,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                        Column {
+                                            Text(
+                                                text = item.title,
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = TextPrimary
+                                            )
+                                            Text(
+                                                text = item.subtitle,
+                                                fontSize = 10.sp,
+                                                color = TextMuted,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
                 }
             }
         }
     }
 }
 
+@Composable
+fun ChatBubbleItem(
+    message: ChatMessage,
+    onCopy: () -> Unit,
+    onSpeak: () -> Unit
+) {
+    val isUser = message.sender == Speaker.USER
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(if (isUser) ZoyaCyanGlass else NovaDarkElevated)
+            .border(
+                1.dp,
+                if (isUser) ZoyaCyanGlow else NovaBorderGlow,
+                RoundedCornerShape(16.dp)
+            )
+            .padding(14.dp)
+    ) {
+        Column {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = if (isUser) "YOU" else "ZOYA",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Black,
+                    color = if (isUser) ZoyaCyanBright else ZoyaVioletBright,
+                    letterSpacing = 1.sp
+                )
+
+                if (!isUser) {
+                    Row {
+                        IconButton(onClick = onSpeak, modifier = Modifier.size(24.dp)) {
+                            Icon(Icons.Default.VolumeUp, contentDescription = "Speak", tint = TextMuted, modifier = Modifier.size(16.dp))
+                        }
+                        Spacer(modifier = Modifier.width(4.dp))
+                        IconButton(onClick = onCopy, modifier = Modifier.size(24.dp)) {
+                            Icon(Icons.Default.AutoAwesome, contentDescription = "Copy", tint = TextMuted, modifier = Modifier.size(16.dp))
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            Text(
+                text = message.text,
+                fontSize = 13.sp,
+                color = TextPrimary,
+                lineHeight = 19.sp
+            )
+        }
+    }
+}

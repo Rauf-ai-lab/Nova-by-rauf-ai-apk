@@ -1,7 +1,10 @@
 package com.example.data.gemini
 
 import com.example.domain.model.ConceptExplanation
+import com.example.domain.model.ExamModePack
 import com.example.domain.model.FlashcardItem
+import com.example.domain.model.OneShotLecture
+import com.example.domain.model.OneShotSection
 import com.example.domain.model.QuestionType
 import com.example.domain.model.QuickRevisionGuide
 import com.example.domain.model.QuizQuestion
@@ -9,12 +12,12 @@ import com.example.domain.model.QuizSession
 import com.example.domain.model.ShortAnswerEvaluation
 import com.example.domain.model.SolutionStep
 import com.example.domain.model.StepByStepSolution
+import com.example.domain.model.StudentProfile
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
-import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
 import retrofit2.http.Body
@@ -39,9 +42,9 @@ class GeminiRestService {
         .build()
 
     private val okHttpClient = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
-        .writeTimeout(60, TimeUnit.SECONDS)
+        .connectTimeout(25, TimeUnit.SECONDS)
+        .readTimeout(45, TimeUnit.SECONDS)
+        .writeTimeout(45, TimeUnit.SECONDS)
         .build()
 
     private val api: GeminiApiEndpoints = Retrofit.Builder()
@@ -55,13 +58,35 @@ class GeminiRestService {
         const val MODEL_FLASH = "gemini-3.5-flash"
         const val MODEL_PRO = "gemini-3.1-pro-preview"
 
-        const val ZOYA_SYSTEM_PROMPT = """You are ZOYA, the personal AI Study Companion inside the NOVA BY RAUF Android application.
-Your personality:
-- Young, sharp, confident, witty, friendly, motivating, and emotionally responsive.
-- You teach students with deep clarity rather than dumping blind answers.
-- When solving problems or explaining concepts, break them down intuitively.
-- Keep tone uplifting, engaging, with light study humor ("Okay genius, let's break this down", "One step at a time, we're studying, not fighting a final boss").
-- Focus exclusively on studying, academic mastery, active recall, problem solving, quizzes, and revision."""
+        fun buildSystemPrompt(profile: StudentProfile? = null): String {
+            val boardContext = if (profile != null) {
+                """
+STUDENT PROFILE CONTEXT:
+- Board: ${profile.boardName} (${profile.state})
+- Class / Grade: ${profile.classLevel}
+- Current Subject: ${profile.subject}
+- Preferred Language: ${profile.language}
+
+PEDAGOGICAL DIRECTIVES:
+- Tailor explanations, difficulty, and examples specifically for ${profile.classLevel} students studying under ${profile.boardName}.
+- Focus on high-yield curriculum concepts, clear step-by-step logic, active recall, and exam mastery.
+- Do NOT copy textbooks verbatim. Generate fresh, original explanations, analogies, and practice problems.
+- If language is "Hinglish / Hindi" or "Urdu", explain core technical terms clearly with contextual bilingual explanations while keeping mathematical/scientific notations standard.
+- Tone: Young, sharp, confident, motivating, and encouraging. Never be robotic or generic.
+                """.trimIndent()
+            } else {
+                "Tailor explanations for school and board curriculum with active recall and deep conceptual clarity."
+            }
+
+            return """You are ZOYA, the intelligent AI Study Companion inside the NOVA BY RAUF Android study platform.
+$boardContext
+
+COMMUNICATION RULES:
+- ZOYA responds primarily in structured, beautifully readable TEXT.
+- Break down concepts intuitively with headings, concise paragraphs, and bullet points.
+- Celebrate curiosity, encourage mastery, and guide students through difficulties step by step.
+- Focus strictly on academic study, homework help, conceptual doubt-solving, quizzes, revision, and exam preparation."""
+        }
     }
 
     suspend fun validateApiKey(apiKey: String): Result<Boolean> = withContext(Dispatchers.IO) {
@@ -85,7 +110,12 @@ Your personality:
         }
     }
 
-    suspend fun chatWithZoya(apiKey: String, userMessage: String, history: List<Pair<String, String>> = emptyList()): Result<String> = withContext(Dispatchers.IO) {
+    suspend fun chatWithZoya(
+        apiKey: String,
+        userMessage: String,
+        history: List<Pair<String, String>> = emptyList(),
+        profile: StudentProfile? = null
+    ): Result<String> = withContext(Dispatchers.IO) {
         try {
             val contentList = mutableListOf<RestContent>()
             for ((role, text) in history.takeLast(6)) {
@@ -95,7 +125,7 @@ Your personality:
 
             val request = GeminiRestRequest(
                 contents = contentList,
-                systemInstruction = RestContent(parts = listOf(RestPart(text = ZOYA_SYSTEM_PROMPT))),
+                systemInstruction = RestContent(parts = listOf(RestPart(text = buildSystemPrompt(profile)))),
                 generationConfig = RestGenerationConfig(temperature = 0.7f)
             )
             val response = api.generateContent(MODEL_FLASH, apiKey, request)
@@ -110,10 +140,11 @@ Your personality:
     suspend fun explainConcept(
         apiKey: String,
         topic: String,
-        depthLevel: String
+        depthLevel: String,
+        profile: StudentProfile? = null
     ): Result<ConceptExplanation> = withContext(Dispatchers.IO) {
         try {
-            val prompt = """Explain the academic concept "$topic" at the "$depthLevel" level.
+            val prompt = """Explain the academic concept "$topic" at the "$depthLevel" level for a ${profile?.classLevel ?: "Class 10"} student studying ${profile?.subject ?: "Science"} (${profile?.boardName ?: "Board"}).
 Format your answer strictly with these exact section headers:
 [QUICK_SUMMARY]
 One or two punchy sentences summarizing the core idea in Zoya's encouraging style.
@@ -138,7 +169,7 @@ A quick reflection question or challenge for the student."""
 
             val request = GeminiRestRequest(
                 contents = listOf(RestContent(parts = listOf(RestPart(text = prompt)))),
-                systemInstruction = RestContent(parts = listOf(RestPart(text = ZOYA_SYSTEM_PROMPT))),
+                systemInstruction = RestContent(parts = listOf(RestPart(text = buildSystemPrompt(profile)))),
                 generationConfig = RestGenerationConfig(temperature = 0.6f)
             )
             val response = api.generateContent(MODEL_FLASH, apiKey, request)
@@ -153,10 +184,11 @@ A quick reflection question or challenge for the student."""
     suspend fun solveProblemStepByStep(
         apiKey: String,
         problemStatement: String,
-        subject: String
+        subject: String,
+        profile: StudentProfile? = null
     ): Result<StepByStepSolution> = withContext(Dispatchers.IO) {
         try {
-            val prompt = """Solve this $subject problem step-by-step for a student.
+            val prompt = """Solve this $subject problem step-by-step for a ${profile?.classLevel ?: "Class 10"} student (${profile?.boardName ?: "Board"}).
 Problem: "$problemStatement"
 
 Structure your response strictly as:
@@ -189,10 +221,10 @@ A similar question for the student to practice."""
 
             val request = GeminiRestRequest(
                 contents = listOf(RestContent(parts = listOf(RestPart(text = prompt)))),
-                systemInstruction = RestContent(parts = listOf(RestPart(text = ZOYA_SYSTEM_PROMPT))),
+                systemInstruction = RestContent(parts = listOf(RestPart(text = buildSystemPrompt(profile)))),
                 generationConfig = RestGenerationConfig(temperature = 0.3f)
             )
-            val response = api.generateContent(MODEL_PRO, apiKey, request)
+            val response = api.generateContent(MODEL_FLASH, apiKey, request)
             val raw = response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text ?: ""
 
             Result.success(parseProblemSolution(problemStatement, subject, raw))
@@ -206,7 +238,8 @@ A similar question for the student to practice."""
         topic: String,
         count: Int = 4,
         difficulty: String = "Medium",
-        questionTypeFilter: String = "All Types"
+        questionTypeFilter: String = "All Types",
+        profile: StudentProfile? = null
     ): Result<QuizSession> = withContext(Dispatchers.IO) {
         try {
             val typeInstructions = when (questionTypeFilter) {
@@ -217,7 +250,7 @@ A similar question for the student to practice."""
                 else -> "Include a rich, balanced mix of: 1) Multiple Choice, 2) True/False, 3) Fill-in-the-blanks, and 4) Short Answer questions."
             }
 
-            val prompt = """Generate $count academic study quiz questions for "$topic" at difficulty level "$difficulty".
+            val prompt = """Generate $count academic study quiz questions for "$topic" at difficulty level "$difficulty" for a ${profile?.classLevel ?: "Class 10"} student (${profile?.boardName ?: "Board"}).
 $typeInstructions
 
 For each question, strictly output in this format:
@@ -236,7 +269,7 @@ WEAK_CONCEPT: Specific concept or subtopic name the student should revise if the
 
             val request = GeminiRestRequest(
                 contents = listOf(RestContent(parts = listOf(RestPart(text = prompt)))),
-                systemInstruction = RestContent(parts = listOf(RestPart(text = ZOYA_SYSTEM_PROMPT))),
+                systemInstruction = RestContent(parts = listOf(RestPart(text = buildSystemPrompt(profile)))),
                 generationConfig = RestGenerationConfig(temperature = 0.5f)
             )
             val response = api.generateContent(MODEL_FLASH, apiKey, request)
@@ -253,7 +286,8 @@ WEAK_CONCEPT: Specific concept or subtopic name the student should revise if the
         apiKey: String,
         question: String,
         modelAnswer: String,
-        studentAnswer: String
+        studentAnswer: String,
+        profile: StudentProfile? = null
     ): Result<ShortAnswerEvaluation> = withContext(Dispatchers.IO) {
         try {
             val prompt = """Evaluate this student's short answer response in your persona as Zoya.
@@ -270,7 +304,7 @@ Provide evaluation strictly in this format:
 
             val request = GeminiRestRequest(
                 contents = listOf(RestContent(parts = listOf(RestPart(text = prompt)))),
-                systemInstruction = RestContent(parts = listOf(RestPart(text = ZOYA_SYSTEM_PROMPT))),
+                systemInstruction = RestContent(parts = listOf(RestPart(text = buildSystemPrompt(profile)))),
                 generationConfig = RestGenerationConfig(temperature = 0.3f)
             )
             val response = api.generateContent(MODEL_FLASH, apiKey, request)
@@ -278,7 +312,7 @@ Provide evaluation strictly in this format:
 
             val grade = raw.lines().firstOrNull { it.startsWith("[GRADE]") }?.removePrefix("[GRADE]")?.trim() ?: "Needs Review"
             val isCorrect = raw.lines().firstOrNull { it.startsWith("[IS_CORRECT]") }?.contains("true", true) == true || grade.contains("Full", true)
-            
+
             fun extractSection(tag: String, nextTag: String?): String {
                 val start = raw.indexOf(tag)
                 if (start == -1) return ""
@@ -308,10 +342,11 @@ Provide evaluation strictly in this format:
     suspend fun generateFlashcards(
         apiKey: String,
         topic: String,
-        count: Int = 5
+        count: Int = 5,
+        profile: StudentProfile? = null
     ): Result<List<FlashcardItem>> = withContext(Dispatchers.IO) {
         try {
-            val prompt = """Generate $count active-recall study flashcards for "$topic".
+            val prompt = """Generate $count active-recall study flashcards for "$topic" (${profile?.subject ?: "Subject"}, ${profile?.classLevel ?: "Class 10"}, ${profile?.boardName ?: "Board"}).
 Format strictly as:
 ---CARD---
 Q: Front question / term to define
@@ -320,7 +355,7 @@ DIFF: Easy/Medium/Hard"""
 
             val request = GeminiRestRequest(
                 contents = listOf(RestContent(parts = listOf(RestPart(text = prompt)))),
-                systemInstruction = RestContent(parts = listOf(RestPart(text = ZOYA_SYSTEM_PROMPT))),
+                systemInstruction = RestContent(parts = listOf(RestPart(text = buildSystemPrompt(profile)))),
                 generationConfig = RestGenerationConfig(temperature = 0.5f)
             )
             val response = api.generateContent(MODEL_FLASH, apiKey, request)
@@ -335,13 +370,14 @@ DIFF: Easy/Medium/Hard"""
 
     suspend fun generateQuickRevision(
         apiKey: String,
-        topic: String
+        topic: String,
+        profile: StudentProfile? = null
     ): Result<QuickRevisionGuide> = withContext(Dispatchers.IO) {
         try {
-            val prompt = """Generate an intensive rapid-fire study revision guide for "$topic".
+            val prompt = """Generate an intensive rapid-fire study revision guide for "$topic" (${profile?.subject ?: "Subject"}, ${profile?.classLevel ?: "Class 10"}, ${profile?.boardName ?: "Board"}).
 Format strictly as:
 [SUBJECT]
-Subject Name
+${profile?.subject ?: "General Study"}
 
 [DEFINITIONS]
 - Term: Definition
@@ -359,7 +395,7 @@ Subject Name
 
             val request = GeminiRestRequest(
                 contents = listOf(RestContent(parts = listOf(RestPart(text = prompt)))),
-                systemInstruction = RestContent(parts = listOf(RestPart(text = ZOYA_SYSTEM_PROMPT))),
+                systemInstruction = RestContent(parts = listOf(RestPart(text = buildSystemPrompt(profile)))),
                 generationConfig = RestGenerationConfig(temperature = 0.5f)
             )
             val response = api.generateContent(MODEL_FLASH, apiKey, request)
@@ -369,6 +405,247 @@ Subject Name
         } catch (e: Exception) {
             Result.failure(e)
         }
+    }
+
+    suspend fun generateOneShotLecture(
+        apiKey: String,
+        chapterTopic: String,
+        profile: StudentProfile
+    ): Result<OneShotLecture> = withContext(Dispatchers.IO) {
+        try {
+            val prompt = """Generate a complete, master-class ONE-SHOT LECTURE for the chapter/topic "$chapterTopic" for a student of ${profile.classLevel} studying ${profile.subject} under ${profile.boardName} (${profile.state}).
+Follow these EXACT section tags to structure the full 14-part lecture:
+
+[CHAPTER_OVERVIEW]
+Provide a high-level summary of what this entire chapter is about and why it matters in exams and real life.
+
+[LEARNING_OBJECTIVES]
+- Objective 1
+- Objective 2
+- Objective 3
+
+[IMPORTANT_CONCEPTS]
+Breakdown of the primary core principles and mechanisms in this chapter.
+
+[DETAILED_EXPLANATION]
+Thorough, crystal-clear conceptual walk-through from basic intuition to advanced understanding.
+
+[SIMPLE_EXAMPLES]
+- Example 1: with simple breakdown
+- Example 2: with simple breakdown
+
+[REAL_WORLD_EXAMPLES]
+- Real-world application 1
+- Real-world application 2
+
+[IMPORTANT_DEFINITIONS]
+- Definition 1: exact statement
+- Definition 2: exact statement
+
+[IMPORTANT_FORMULAS]
+- Formula/Law 1: equation, variables & units
+- Formula/Law 2: equation, variables & units
+
+[COMMON_MISTAKES]
+- Trap 1: What students do wrong and how to avoid it
+- Trap 2: Confusion between concepts
+
+[FAQS]
+Q: Frequently asked question 1?
+A: Clear answer.
+Q: Frequently asked question 2?
+A: Clear answer.
+
+[EXAM_FOCUSED_POINTS]
+- High-yield scoring tip 1
+- Common 3-mark or 5-mark question trend 2
+- Derivation/Diagram reminder 3
+
+[QUICK_REVISION]
+Bullet-speed recap of essential points.
+
+[PRACTICE_QUESTIONS]
+- Practice Question 1 (Conceptual)
+- Practice Question 2 (Numerical / Problem)
+- Practice Question 3 (Exam style)
+
+[FINAL_SUMMARY]
+Final motivating closing statement by Zoya."""
+
+            val request = GeminiRestRequest(
+                contents = listOf(RestContent(parts = listOf(RestPart(text = prompt)))),
+                systemInstruction = RestContent(parts = listOf(RestPart(text = buildSystemPrompt(profile)))),
+                generationConfig = RestGenerationConfig(temperature = 0.5f)
+            )
+            val response = api.generateContent(MODEL_FLASH, apiKey, request)
+            val raw = response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text ?: ""
+
+            Result.success(parseOneShotLecture(chapterTopic, profile, raw))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun generateExamModePack(
+        apiKey: String,
+        topic: String,
+        profile: StudentProfile
+    ): Result<ExamModePack> = withContext(Dispatchers.IO) {
+        try {
+            val prompt = """Generate a high-yield EXAM MODE PACK for "$topic" tailored to ${profile.classLevel} ${profile.subject} for ${profile.boardName} (${profile.state}).
+Format strictly with these tags:
+[HIGH_PRIORITY_CONCEPTS]
+- Concept 1
+- Concept 2
+
+[EXPECTED_QUESTIONS]
+- Question 1 (Marks trend)
+- Question 2 (Marks trend)
+
+[COMMON_TRAPS]
+- Trap 1 & Avoidance strategy
+- Trap 2 & Avoidance strategy
+
+[FORMULA_SHEET]
+- Formula 1 (with conditions)
+- Formula 2 (with conditions)
+
+[DEFINITIONS]
+- Exact definition 1
+- Exact definition 2
+
+[PRACTICE_DRILLS]
+- Quick drill 1
+- Quick drill 2"""
+
+            val request = GeminiRestRequest(
+                contents = listOf(RestContent(parts = listOf(RestPart(text = prompt)))),
+                systemInstruction = RestContent(parts = listOf(RestPart(text = buildSystemPrompt(profile)))),
+                generationConfig = RestGenerationConfig(temperature = 0.4f)
+            )
+            val response = api.generateContent(MODEL_FLASH, apiKey, request)
+            val raw = response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text ?: ""
+
+            fun extractList(header: String, next: String?): List<String> {
+                val start = raw.indexOf(header)
+                if (start == -1) return emptyList()
+                val contentStart = start + header.length
+                val end = if (next != null) raw.indexOf(next, contentStart) else raw.length
+                val chunk = if (end != -1) raw.substring(contentStart, end) else raw.substring(contentStart)
+                return chunk.lines().map { it.trim().removePrefix("-").trim() }.filter { it.isNotBlank() }
+            }
+
+            Result.success(
+                ExamModePack(
+                    topic = topic,
+                    subject = profile.subject,
+                    board = profile.boardName,
+                    classLevel = profile.classLevel,
+                    highPriorityConcepts = extractList("[HIGH_PRIORITY_CONCEPTS]", "[EXPECTED_QUESTIONS]").ifEmpty { listOf("Core theoretical foundation of $topic", "Key derivations and applications") },
+                    mostExpectedQuestions = extractList("[EXPECTED_QUESTIONS]", "[COMMON_TRAPS]").ifEmpty { listOf("Explain the working mechanism of $topic.", "State and derive the core relationship in $topic.") },
+                    commonExamTraps = extractList("[COMMON_TRAPS]", "[FORMULA_SHEET]").ifEmpty { listOf("Forgetting SI units in final answers", "Confusing sign conventions") },
+                    formulaCheatSheet = extractList("[FORMULA_SHEET]", "[DEFINITIONS]").ifEmpty { listOf("Standard formula for $topic") },
+                    definitionsToMemorize = extractList("[DEFINITIONS]", "[PRACTICE_DRILLS]").ifEmpty { listOf("$topic: Prescribed board definition") },
+                    quickPracticeProblems = extractList("[PRACTICE_DRILLS]", null).ifEmpty { listOf("Solve for standard conditions with given constants.") }
+                )
+            )
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    private fun parseOneShotLecture(chapterTopic: String, profile: StudentProfile, raw: String): OneShotLecture {
+        fun extract(header: String, next: String? = null): String {
+            val start = raw.indexOf(header)
+            if (start == -1) return ""
+            val contentStart = start + header.length
+            val end = if (next != null) raw.indexOf(next, contentStart) else raw.length
+            return if (end != -1) raw.substring(contentStart, end).trim() else raw.substring(contentStart).trim()
+        }
+
+        fun extractList(header: String, next: String?): List<String> {
+            val chunk = extract(header, next)
+            return chunk.lines().map { it.trim().removePrefix("-").removePrefix("•").trim() }.filter { it.isNotBlank() }
+        }
+
+        fun extractFaqs(header: String, next: String?): List<Pair<String, String>> {
+            val chunk = extract(header, next)
+            val list = mutableListOf<Pair<String, String>>()
+            val lines = chunk.lines().map { it.trim() }.filter { it.isNotBlank() }
+            var currentQ = ""
+            var currentA = ""
+            for (line in lines) {
+                if (line.startsWith("Q:", true)) {
+                    if (currentQ.isNotEmpty()) {
+                        list.add(currentQ to currentA)
+                        currentA = ""
+                    }
+                    currentQ = line.removePrefix("Q:").removePrefix("q:").trim()
+                } else if (line.startsWith("A:", true)) {
+                    currentA = line.removePrefix("A:").removePrefix("a:").trim()
+                } else if (currentQ.isNotEmpty()) {
+                    currentA += " $line"
+                }
+            }
+            if (currentQ.isNotEmpty()) {
+                list.add(currentQ to currentA)
+            }
+            return if (list.isNotEmpty()) list else listOf("What is the main takeaway?" to "Understanding the core mechanism of $chapterTopic thoroughly.")
+        }
+
+        val overview = extract("[CHAPTER_OVERVIEW]", "[LEARNING_OBJECTIVES]").ifEmpty { "Comprehensive master-class on $chapterTopic." }
+        val objectives = extractList("[LEARNING_OBJECTIVES]", "[IMPORTANT_CONCEPTS]").ifEmpty { listOf("Master fundamental definitions", "Understand step-by-step principles", "Solve key exam problems") }
+        val importantConcepts = extract("[IMPORTANT_CONCEPTS]", "[DETAILED_EXPLANATION]").ifEmpty { "Core ideas and relationships that govern $chapterTopic." }
+        val detailedExplanation = extract("[DETAILED_EXPLANATION]", "[SIMPLE_EXAMPLES]").ifEmpty { raw }
+        val simpleExamples = extractList("[SIMPLE_EXAMPLES]", "[REAL_WORLD_EXAMPLES]").ifEmpty { listOf("Basic textbook example illustrating the concept.") }
+        val realWorldExamples = extractList("[REAL_WORLD_EXAMPLES]", "[IMPORTANT_DEFINITIONS]").ifEmpty { listOf("Everyday physical application and technology usage.") }
+        val definitions = extractList("[IMPORTANT_DEFINITIONS]", "[IMPORTANT_FORMULAS]").ifEmpty { listOf("$chapterTopic: Standard definition") }
+        val formulas = extractList("[IMPORTANT_FORMULAS]", "[COMMON_MISTAKES]").ifEmpty { listOf("Primary governing equations") }
+        val mistakes = extractList("[COMMON_MISTAKES]", "[FAQS]").ifEmpty { listOf("Overlooking boundary conditions", "Unit conversion errors") }
+        val faqs = extractFaqs("[FAQS]", "[EXAM_FOCUSED_POINTS]")
+        val examPoints = extractList("[EXAM_FOCUSED_POINTS]", "[QUICK_REVISION]").ifEmpty { listOf("Frequently asked 3-mark conceptual questions", "Key diagrams and labels to memorize") }
+        val quickRevision = extract("[QUICK_REVISION]", "[PRACTICE_QUESTIONS]").ifEmpty { "Quick summary of formulas and definitions." }
+        val practiceQuestions = extractList("[PRACTICE_QUESTIONS]", "[FINAL_SUMMARY]").ifEmpty { listOf("Define $chapterTopic and state two key applications.", "Solve a standard numerical problem based on the core formula.") }
+        val summary = extract("[FINAL_SUMMARY]").ifEmpty { "Great job mastering $chapterTopic! You're ready to ace your exam." }
+
+        val structuredSections = listOf(
+            OneShotSection(1, "Chapter Overview", "High-level orientation", overview),
+            OneShotSection(2, "Learning Objectives", "Goals for this session", objectives.joinToString("\n• ", prefix = "• ")),
+            OneShotSection(3, "Important Concepts", "Core theoretical foundations", importantConcepts),
+            OneShotSection(4, "Detailed Explanation", "Step-by-step breakdown", detailedExplanation),
+            OneShotSection(5, "Simple Examples", "Step-by-step illustrations", simpleExamples.joinToString("\n\n")),
+            OneShotSection(6, "Real-world Examples", "Practical applications", realWorldExamples.joinToString("\n\n")),
+            OneShotSection(7, "Important Definitions", "Precise academic statements", definitions.joinToString("\n• ", prefix = "• ")),
+            OneShotSection(8, "Important Formulas", "Equations & Laws", formulas.joinToString("\n• ", prefix = "• ")),
+            OneShotSection(9, "Common Mistakes", "Traps to avoid in exams", mistakes.joinToString("\n• ", prefix = "• ")),
+            OneShotSection(10, "Frequently Asked Questions", "Conceptual Doubts", faqs.joinToString("\n\n") { "Q: ${it.first}\nA: ${it.second}" }),
+            OneShotSection(11, "Exam-Focused Points", "High-yield scoring tips", examPoints.joinToString("\n• ", prefix = "• ")),
+            OneShotSection(12, "Quick Revision", "Rapid recap", quickRevision),
+            OneShotSection(13, "Practice Questions", "Active recall drills", practiceQuestions.joinToString("\n\n")),
+            OneShotSection(14, "Final Summary", "Closing thoughts & mastery", summary)
+        )
+
+        return OneShotLecture(
+            topic = chapterTopic,
+            subject = profile.subject,
+            board = profile.boardName,
+            classLevel = profile.classLevel,
+            chapterOverview = overview,
+            learningObjectives = objectives,
+            importantConcepts = importantConcepts,
+            detailedExplanation = detailedExplanation,
+            simpleExamples = simpleExamples,
+            realWorldExamples = realWorldExamples,
+            importantDefinitions = definitions,
+            importantFormulas = formulas,
+            commonMistakes = mistakes,
+            frequentlyAskedQuestions = faqs,
+            examFocusedPoints = examPoints,
+            quickRevision = quickRevision,
+            practiceQuestions = practiceQuestions,
+            finalSummary = summary,
+            sections = structuredSections
+        )
     }
 
     // Parsing helpers
@@ -511,7 +788,6 @@ Subject Name
                 }
             }
 
-            // Fallback heuristics if type wasn't explicitly tagged
             if (qType == QuestionType.MULTIPLE_CHOICE) {
                 if (options.isEmpty() && (qText.contains("_______") || qText.contains("___"))) {
                     qType = QuestionType.FILL_IN_BLANKS
@@ -529,7 +805,6 @@ Subject Name
                 }
             } else if (qType == QuestionType.MULTIPLE_CHOICE) {
                 if (options.size < 2) {
-                    // Provide fallback options if parsing missed some
                     options.add(correctAnswerText.ifEmpty { "Primary principle" })
                     options.add("Inverted hypothesis")
                     options.add("Secondary exception")
@@ -563,7 +838,6 @@ Subject Name
         }
 
         return questions.ifEmpty {
-            // Fallback sample question if parsing was empty
             listOf(
                 QuizQuestion(
                     id = 1L,

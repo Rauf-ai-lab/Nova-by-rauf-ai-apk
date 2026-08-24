@@ -1,8 +1,12 @@
 package com.example.ui.screens.study
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -28,29 +32,28 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Done
-import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.SportsEsports
-import androidx.compose.material.icons.filled.VolumeUp
-import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.EmojiEvents
-import androidx.compose.material.icons.outlined.HelpOutline
 import androidx.compose.material.icons.outlined.Lightbulb
 import androidx.compose.material.icons.outlined.Warning
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -64,7 +67,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
@@ -75,10 +77,8 @@ import com.example.domain.model.QuestionType
 import com.example.domain.model.QuizQuestion
 import com.example.domain.model.QuizSession
 import com.example.domain.repository.StudyRepository
-import com.example.ui.components.FuturisticButton
 import com.example.ui.components.GlassmorphicCard
 import com.example.ui.theme.NovaBorderGlow
-import com.example.ui.theme.NovaCardGlass
 import com.example.ui.theme.NovaDarkElevated
 import com.example.ui.theme.NovaDarkSurface
 import com.example.ui.theme.NovaObsidian
@@ -93,12 +93,12 @@ import com.example.ui.theme.ZoyaCyan
 import com.example.ui.theme.ZoyaCyanBright
 import com.example.ui.theme.ZoyaCyanGlass
 import com.example.ui.theme.ZoyaCyanGlow
-import com.example.ui.theme.ZoyaElectricBlue
 import com.example.ui.theme.ZoyaEmerald
 import com.example.ui.theme.ZoyaEmeraldGlass
 import com.example.ui.theme.ZoyaPurpleGlass
 import com.example.ui.theme.ZoyaViolet
 import com.example.ui.theme.ZoyaVioletBright
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -106,1217 +106,836 @@ import kotlinx.coroutines.launch
 fun QuizArenaScreen(
     repository: StudyRepository,
     onClose: () -> Unit,
-    onSpeakText: (String) -> Unit,
+    onSpeakText: (String) -> Unit = {},
+    initialTopic: String = "",
     modifier: Modifier = Modifier
 ) {
-    var topicInput by remember { mutableStateOf("") }
+    val currentProfile by repository.studentProfile.collectAsState()
+
+    var topicInput by remember { mutableStateOf(initialTopic.ifBlank { "" }) }
     var selectedDifficulty by remember { mutableStateOf("Medium") }
     var selectedTypeFilter by remember { mutableStateOf("All Types") }
-    var selectedQuestionCount by remember { mutableIntStateOf(4) }
+    var selectedQuestionCount by remember { mutableIntStateOf(5) }
     var isLoading by remember { mutableStateOf(false) }
-    var isEvaluatingShortAnswer by remember { mutableStateOf(false) }
+
     var currentQuiz by remember { mutableStateOf<QuizSession?>(null) }
     var currentIndex by remember { mutableIntStateOf(0) }
+
+    // Real-Time Stats
     var score by remember { mutableIntStateOf(0) }
+    var correctCount by remember { mutableIntStateOf(0) }
+    var wrongCount by remember { mutableIntStateOf(0) }
+    var attemptedCount by remember { mutableIntStateOf(0) }
+
+    var isAnswerLocked by remember { mutableStateOf(false) }
+    var selectedOptionIndex by remember { mutableIntStateOf(-1) }
+    var showFeedback by remember { mutableStateOf(false) }
+    var feedbackMessage by remember { mutableStateOf("") }
+    var isFeedbackCorrect by remember { mutableStateOf(false) }
     var quizFinished by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
-    // Interactive inputs for text-based questions
     var textAnswerInput by remember { mutableStateOf("") }
+    var isEvaluatingShortAnswer by remember { mutableStateOf(false) }
 
     val difficulties = listOf("Easy", "Medium", "Hard")
     val questionTypeOptions = listOf("All Types", "Multiple Choice", "True / False", "Fill in the Blank", "Short Answer")
-    val questionCounts = listOf(3, 4, 6, 8)
-    val quickTopics = listOf(
-        "Thermodynamics",
-        "Organic Chemistry",
-        "Calculus & Integrals",
-        "Cellular Respiration",
-        "Data Structures",
-        "Quantum Physics",
-        "Macroeconomics",
-        "World History"
-    )
+    val questionCounts = listOf(3, 5, 8, 10)
+
+    val quickTopics = remember(currentProfile.subject) {
+        when (currentProfile.subject.lowercase()) {
+            "physics" -> listOf("Optics & Mirrors", "Electric Circuits", "Ohm's Law", "Thermodynamics", "Gravitation", "Newton's Laws")
+            "chemistry" -> listOf("Acids & Bases", "Chemical Reactions", "Periodic Table", "Carbon Compounds", "Atomic Structure")
+            "biology" -> listOf("Photosynthesis", "Circulatory System", "Genetics & DNA", "Nervous System", "Ecology")
+            "mathematics", "math" -> listOf("Quadratic Equations", "Trigonometry Ratios", "Coordinate Geometry", "Probability", "Arithmetic Progression")
+            else -> listOf("Chapter Revision", "Core Definitions", "Important Formulas", "Exam Hotspots")
+        }
+    }
 
     val scope = rememberCoroutineScope()
-    val scrollState = rememberScrollState()
     val focusManager = LocalFocusManager.current
+
+    fun resetStats() {
+        score = 0
+        correctCount = 0
+        wrongCount = 0
+        attemptedCount = 0
+        currentIndex = 0
+        isAnswerLocked = false
+        selectedOptionIndex = -1
+        showFeedback = false
+        feedbackMessage = ""
+        quizFinished = false
+    }
 
     fun startQuiz(topic: String) {
         if (topic.isBlank()) return
         isLoading = true
         errorMessage = null
         currentQuiz = null
-        currentIndex = 0
-        score = 0
-        quizFinished = false
-        textAnswerInput = ""
+        resetStats()
 
         scope.launch {
-            val res = repository.generateQuiz(
+            val result = repository.generateQuiz(
                 topic = topic,
                 count = selectedQuestionCount,
                 difficulty = selectedDifficulty,
                 questionTypeFilter = selectedTypeFilter
             )
             isLoading = false
-            res.onSuccess { session ->
-                if (session.questions.isNotEmpty()) {
-                    currentQuiz = session
+            result.onSuccess { session ->
+                currentQuiz = session
+            }.onFailure { err ->
+                errorMessage = err.localizedMessage ?: "Failed to generate quiz."
+            }
+        }
+    }
+
+    fun handleOptionSelected(q: QuizQuestion, optionIdx: Int) {
+        if (isAnswerLocked) return
+        isAnswerLocked = true
+        selectedOptionIndex = optionIdx
+        q.selectedIndex = optionIdx
+        q.answered = true
+
+        val isCorrect = optionIdx == q.correctIndex
+        q.isCorrect = isCorrect
+        attemptedCount++
+
+        if (isCorrect) {
+            score++
+            correctCount++
+            isFeedbackCorrect = true
+            feedbackMessage = "Correct! Nice one."
+            showFeedback = true
+
+            // Smooth auto-slide transition after brief feedback
+            scope.launch {
+                delay(1200)
+                if (currentIndex < (currentQuiz?.questions?.size ?: 0) - 1) {
+                    currentIndex++
+                    isAnswerLocked = false
+                    selectedOptionIndex = -1
+                    showFeedback = false
                 } else {
-                    errorMessage = "Zoya couldn't generate questions for this topic. Try another!"
+                    quizFinished = true
+                    currentQuiz?.let { repository.recordQuizSession(it) }
                 }
-            }.onFailure {
-                errorMessage = it.localizedMessage ?: "Failed to generate quiz. Check network or API key."
+            }
+        } else {
+            wrongCount++
+            isFeedbackCorrect = false
+            val correctOpt = q.options.getOrElse(q.correctIndex) { q.correctAnswerText }
+            feedbackMessage = "Wrong answer. Correct answer: $correctOpt\nWhy? ${q.explanation}"
+            showFeedback = true
+        }
+    }
+
+    fun handleNextAfterWrong() {
+        if (currentIndex < (currentQuiz?.questions?.size ?: 0) - 1) {
+            currentIndex++
+            isAnswerLocked = false
+            selectedOptionIndex = -1
+            showFeedback = false
+        } else {
+            quizFinished = true
+            currentQuiz?.let { session ->
+                scope.launch { repository.recordQuizSession(session) }
             }
         }
     }
 
-    fun submitShortAnswer(question: QuizQuestion) {
-        if (textAnswerInput.isBlank()) return
-        isEvaluatingShortAnswer = true
-        focusManager.clearFocus()
-
-        scope.launch {
-            val evalResult = repository.evaluateShortAnswer(
-                question = question.question,
-                modelAnswer = question.correctAnswerText.ifEmpty { question.explanation },
-                studentAnswer = textAnswerInput
-            )
-            isEvaluatingShortAnswer = false
-            evalResult.onSuccess { eval ->
-                question.userTextAnswer = textAnswerInput
-                question.answered = true
-                question.isCorrect = eval.isCorrect
-                question.evaluationFeedback = eval.scoreGrade
-                if (eval.isCorrect) {
-                    score++
-                }
-            }.onFailure {
-                // Fallback local evaluation if offline
-                val matchesKeyword = question.correctAnswerText.split(" ")
-                    .any { word -> word.length > 3 && textAnswerInput.contains(word, ignoreCase = true) }
-                question.userTextAnswer = textAnswerInput
-                question.answered = true
-                question.isCorrect = matchesKeyword
-                question.evaluationFeedback = if (matchesKeyword) "Good attempt" else "Needs review"
-                if (matchesKeyword) score++
-            }
-        }
-    }
-
-    fun submitFillInBlank(question: QuizQuestion) {
-        if (textAnswerInput.isBlank()) return
-        focusManager.clearFocus()
-        val expected = question.correctAnswerText.trim().lowercase()
-        val cleanedInput = textAnswerInput.trim().lowercase()
-        val isMatch = cleanedInput == expected || cleanedInput.contains(expected) || expected.contains(cleanedInput)
-        
-        question.userTextAnswer = textAnswerInput
-        question.answered = true
-        question.isCorrect = isMatch
-        if (isMatch) score++
-    }
-
-    Surface(modifier = modifier.fillMaxSize(), color = NovaObsidian) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 20.dp)
-                .verticalScroll(scrollState)
-        ) {
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Header Bar
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(NovaObsidian)
+    ) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            // Top App Bar
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
+                    IconButton(
+                        onClick = {
+                            if (currentQuiz != null && !quizFinished) {
+                                currentQuiz = null
+                            } else {
+                                onClose()
+                            }
+                        },
                         modifier = Modifier
-                            .size(36.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(ZoyaPurpleGlass)
-                            .border(1.dp, ZoyaViolet.copy(alpha = 0.3f), RoundedCornerShape(10.dp)),
-                        contentAlignment = Alignment.Center
+                            .size(40.dp)
+                            .background(NovaDarkElevated, CircleShape)
+                            .testTag("quiz_back_button")
                     ) {
                         Icon(
-                            imageVector = Icons.Default.SportsEsports,
-                            contentDescription = null,
-                            tint = ZoyaVioletBright,
-                            modifier = Modifier.size(20.dp)
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            tint = TextPrimary
                         )
                     }
-                    Spacer(modifier = Modifier.width(10.dp))
+                    Spacer(modifier = Modifier.width(12.dp))
                     Column {
                         Text(
-                            text = "Quiz Generator & Arena",
-                            style = MaterialTheme.typography.titleMedium.copy(
-                                fontWeight = FontWeight.Bold,
-                                color = TextPrimary
-                            )
+                            text = "QUIZ ARENA",
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Black,
+                            color = ZoyaVioletBright,
+                            letterSpacing = 1.sp
                         )
                         Text(
-                            text = "AI-Driven Diagnostics & Concept Feedback",
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                color = TextCyanSub,
-                                fontSize = 10.sp
-                            )
+                            text = "${currentProfile.boardName} • ${currentProfile.subject}",
+                            fontSize = 12.sp,
+                            color = TextCyanSub
                         )
                     }
                 }
-                IconButton(
-                    onClick = onClose,
-                    modifier = Modifier.testTag("close_quiz_arena")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = "Close",
-                        tint = TextSecondary
-                    )
+
+                if (currentQuiz != null && !quizFinished) {
+                    IconButton(
+                        onClick = { currentQuiz?.let { startQuiz(it.topic) } },
+                        modifier = Modifier
+                            .size(38.dp)
+                            .background(NovaDarkElevated, CircleShape)
+                    ) {
+                        Icon(Icons.Default.Refresh, contentDescription = "Restart", tint = TextMuted)
+                    }
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            // REAL-TIME STATS BAR (When quiz is active)
+            if (currentQuiz != null && !quizFinished) {
+                val totalQuestions = currentQuiz!!.questions.size
+                val currentQNum = currentIndex + 1
 
-            if (currentQuiz == null) {
-                // ==================== QUIZ SETUP PANEL ====================
-                GlassmorphicCard(
-                    modifier = Modifier.fillMaxWidth(),
-                    borderColor = NovaBorderGlow,
-                    cornerRadius = 20.dp
-                ) {
-                    Column(modifier = Modifier.padding(18.dp)) {
-                        Text(
-                            text = "CUSTOMIZE YOUR QUIZ",
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                color = ZoyaCyanBright,
-                                fontWeight = FontWeight.Bold,
-                                letterSpacing = 1.2.sp,
-                                fontSize = 10.sp
-                            )
-                        )
-                        Spacer(modifier = Modifier.height(10.dp))
-
-                        // Topic input field
-                        OutlinedTextField(
-                            value = topicInput,
-                            onValueChange = { topicInput = it },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("quiz_topic_input"),
-                            placeholder = {
-                                Text("Enter any academic topic or formula...", color = TextMuted, fontSize = 13.sp)
-                            },
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = ZoyaCyan,
-                                unfocusedBorderColor = NovaBorderGlow,
-                                focusedContainerColor = NovaDarkElevated,
-                                unfocusedContainerColor = NovaDarkElevated,
-                                focusedTextColor = TextPrimary,
-                                unfocusedTextColor = TextPrimary
-                            ),
-                            shape = RoundedCornerShape(14.dp),
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
-                            keyboardActions = KeyboardActions(onGo = { startQuiz(topicInput) }),
-                            trailingIcon = {
-                                if (topicInput.isNotBlank()) {
-                                    IconButton(onClick = { topicInput = "" }) {
-                                        Icon(imageVector = Icons.Default.Close, contentDescription = "Clear", tint = TextMuted, modifier = Modifier.size(16.dp))
-                                    }
-                                }
-                            }
-                        )
-
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        // Quick Picks
-                        Text(
-                            text = "POPULAR TOPICS",
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                color = TextMuted,
-                                fontSize = 9.5.sp,
-                                letterSpacing = 0.8.sp
-                            )
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            items(quickTopics) { pick ->
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(20.dp))
-                                        .background(NovaDarkSurface)
-                                        .border(1.dp, ZoyaCyan.copy(alpha = 0.2f), RoundedCornerShape(20.dp))
-                                        .clickable {
-                                            topicInput = pick
-                                        }
-                                        .padding(horizontal = 10.dp, vertical = 5.dp)
-                                    ) {
-                                        Text(
-                                            text = pick,
-                                            style = MaterialTheme.typography.labelSmall.copy(
-                                                color = if (topicInput == pick) ZoyaCyanBright else TextSecondary,
-                                                fontWeight = if (topicInput == pick) FontWeight.Bold else FontWeight.Normal,
-                                                fontSize = 11.sp
-                                            )
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                Spacer(modifier = Modifier.height(14.dp))
-
-                // 1. Difficulty Level Selector
-                Text(
-                    text = "DIFFICULTY LEVEL",
-                    style = MaterialTheme.typography.labelSmall.copy(
-                        color = TextMuted,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.sp,
-                        fontSize = 10.sp
-                    )
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    difficulties.forEach { diff ->
-                        val isSelected = diff == selectedDifficulty
-                        val diffColor = when (diff) {
-                            "Easy" -> ZoyaEmerald
-                            "Medium" -> ZoyaCyan
-                            else -> ZoyaCoral
-                        }
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(if (isSelected) diffColor.copy(alpha = 0.2f) else NovaDarkElevated)
-                                .border(
-                                    width = if (isSelected) 1.5.dp else 1.dp,
-                                    color = if (isSelected) diffColor else NovaBorderGlow,
-                                    shape = RoundedCornerShape(14.dp)
-                                )
-                                .clickable { selectedDifficulty = diff }
-                                .padding(vertical = 10.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text(
-                                    text = diff,
-                                    style = MaterialTheme.typography.labelMedium.copy(
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                        color = if (isSelected) diffColor else TextPrimary,
-                                        fontSize = 13.sp
-                                    )
-                                )
-                                Text(
-                                    text = when (diff) {
-                                        "Easy" -> "Foundational"
-                                        "Medium" -> "Application"
-                                        else -> "Advanced"
-                                    },
-                                    style = MaterialTheme.typography.labelSmall.copy(
-                                        color = TextMuted,
-                                        fontSize = 9.sp
-                                    )
-                                )
-                            }
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(14.dp))
-
-                // 2. Question Types Filter
-                Text(
-                    text = "SUPPORTED QUESTION TYPES",
-                    style = MaterialTheme.typography.labelSmall.copy(
-                        color = TextMuted,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.sp,
-                        fontSize = 10.sp
-                    )
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    questionTypeOptions.forEach { qType ->
-                        val isSelected = qType == selectedTypeFilter
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(if (isSelected) ZoyaViolet.copy(alpha = 0.25f) else NovaDarkElevated)
-                                .border(
-                                    1.dp,
-                                    if (isSelected) ZoyaVioletBright else NovaBorderGlow,
-                                    RoundedCornerShape(12.dp)
-                                )
-                                .clickable { selectedTypeFilter = qType }
-                                .padding(horizontal = 12.dp, vertical = 7.dp)
-                        ) {
-                            Text(
-                                text = qType,
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (isSelected) ZoyaVioletBright else TextPrimary,
-                                    fontSize = 11.5.sp
-                                )
-                            )
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(14.dp))
-
-                // 3. Question Count
-                Text(
-                    text = "NUMBER OF QUESTIONS",
-                    style = MaterialTheme.typography.labelSmall.copy(
-                        color = TextMuted,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.sp,
-                        fontSize = 10.sp
-                    )
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    questionCounts.forEach { count ->
-                        val isSelected = count == selectedQuestionCount
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(if (isSelected) ZoyaCyan.copy(alpha = 0.2f) else NovaDarkElevated)
-                                .border(
-                                    1.dp,
-                                    if (isSelected) ZoyaCyan else NovaBorderGlow,
-                                    RoundedCornerShape(12.dp)
-                                )
-                                .clickable { selectedQuestionCount = count }
-                                .padding(vertical = 8.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = "$count Questions",
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    color = if (isSelected) ZoyaCyanBright else TextPrimary,
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                    fontSize = 11.5.sp
-                                )
-                            )
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(24.dp))
-
-                // Generate Button
-                FuturisticButton(
-                    text = if (isLoading) "Zoya is Generating Quiz..." else "Generate Quiz with Zoya",
-                    onClick = { startQuiz(topicInput) },
-                    enabled = !isLoading && topicInput.isNotBlank(),
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .testTag("start_quiz_btn")
-                )
-
-                if (isLoading) {
-                    Spacer(modifier = Modifier.height(20.dp))
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(140.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            CircularProgressIndicator(
-                                color = ZoyaCyan,
-                                strokeWidth = 3.dp,
-                                modifier = Modifier.size(36.dp)
-                            )
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Text(
-                                text = "Zoya is formulating questions, mistake traps & weak concept maps...",
-                                style = MaterialTheme.typography.bodyMedium.copy(
-                                    color = TextCyanSub,
-                                    fontSize = 12.5.sp
-                                ),
-                                textAlign = TextAlign.Center
-                            )
-                        }
-                    }
-                }
-
-                errorMessage?.let { err ->
-                    Spacer(modifier = Modifier.height(16.dp))
-                    GlassmorphicCard(
-                        modifier = Modifier.fillMaxWidth(),
-                        borderColor = ZoyaCoral.copy(alpha = 0.4f)
-                    ) {
-                        Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(imageVector = Icons.Outlined.Warning, contentDescription = null, tint = ZoyaCoral)
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Text(text = err, color = ZoyaCoral, fontSize = 12.5.sp)
-                        }
-                    }
-                }
-            } else {
-                val session = currentQuiz!!
-                if (quizFinished) {
-                    // ==================== QUIZ COMPLETED DIAGNOSTIC SUMMARY ====================
-                    val weakConcepts = session.questions
-                        .filter { !it.isCorrect || it.weakConcept.isNotBlank() }
-                        .map { it.weakConcept.ifEmpty { session.topic } }
-                        .distinct()
-
-                    GlassmorphicCard(
-                        modifier = Modifier.fillMaxWidth(),
-                        borderColor = ZoyaCyan.copy(alpha = 0.5f),
-                        cornerRadius = 24.dp
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(22.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(64.dp)
-                                    .clip(CircleShape)
-                                    .background(if (score >= session.questions.size / 2) ZoyaAmberGlass else ZoyaPurpleGlass),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Outlined.EmojiEvents,
-                                    contentDescription = null,
-                                    tint = if (score >= session.questions.size / 2) ZoyaAmber else ZoyaVioletBright,
-                                    modifier = Modifier.size(36.dp)
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Text(
-                                text = "QUIZ DIAGNOSTIC COMPLETE",
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    color = TextMuted,
-                                    letterSpacing = 1.5.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = session.topic,
-                                style = MaterialTheme.typography.titleLarge.copy(
-                                    fontWeight = FontWeight.Bold,
-                                    color = TextPrimary
-                                ),
-                                textAlign = TextAlign.Center
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                text = "$score / ${session.questions.size}",
-                                style = MaterialTheme.typography.displayMedium.copy(
-                                    color = if (score == session.questions.size) ZoyaEmerald else if (score >= session.questions.size / 2) ZoyaCyanBright else ZoyaAmber,
-                                    fontWeight = FontWeight.Black,
-                                    fontSize = 36.sp
-                                )
-                            )
-                            val percentage = ((score.toFloat() / session.questions.size) * 100).toInt()
-                            Text(
-                                text = "$percentage% Mastery • ${session.difficulty} Level",
-                                style = MaterialTheme.typography.bodySmall.copy(color = TextSecondary)
-                            )
-
-                            Spacer(modifier = Modifier.height(14.dp))
-
-                            // Zoya summary critique
-                            val zoyaSummary = when {
-                                score == session.questions.size -> "Flawless mastery! You demonstrated deep conceptual clarity across all question types."
-                                score >= session.questions.size / 2 -> "Solid foundation! A few edge cases caught you off guard. Focus on the identified weak concepts below."
-                                else -> "Great active recall practice! Review the explanations and mistake breakdowns below to solidify your understanding."
-                            }
-
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(NovaDarkSurface)
-                                    .padding(12.dp)
-                            ) {
-                                Text(
-                                    text = "Zoya: \"$zoyaSummary\"",
-                                    style = MaterialTheme.typography.bodyMedium.copy(
-                                        color = TextCyanSub,
-                                        fontStyle = FontStyle.Italic,
-                                        fontSize = 12.5.sp,
-                                        lineHeight = 18.sp
-                                    )
-                                )
-                            }
-
-                            // Weak Concepts to Focus on
-                            if (weakConcepts.isNotEmpty()) {
-                                Spacer(modifier = Modifier.height(16.dp))
-                                Column(modifier = Modifier.fillMaxWidth()) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(
-                                            imageVector = Icons.Default.Psychology,
-                                            contentDescription = null,
-                                            tint = ZoyaAmber,
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(
-                                            text = "IDENTIFIED WEAK CONCEPTS TO REINFORCE",
-                                            style = MaterialTheme.typography.labelSmall.copy(
-                                                color = ZoyaAmber,
-                                                fontWeight = FontWeight.Bold,
-                                                letterSpacing = 0.8.sp,
-                                                fontSize = 9.5.sp
-                                            )
-                                        )
-                                    }
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    FlowRow(
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                                    ) {
-                                        weakConcepts.forEach { concept ->
-                                            Box(
-                                                modifier = Modifier
-                                                    .clip(RoundedCornerShape(10.dp))
-                                                    .background(ZoyaAmberGlass)
-                                                    .border(1.dp, ZoyaAmber.copy(alpha = 0.3f), RoundedCornerShape(10.dp))
-                                                .padding(horizontal = 10.dp, vertical = 6.dp)
-                                            ) {
-                                                Text(
-                                                    text = "• $concept",
-                                                    style = MaterialTheme.typography.labelSmall.copy(
-                                                        color = TextPrimary,
-                                                        fontSize = 11.5.sp
-                                                    )
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            Spacer(modifier = Modifier.height(20.dp))
-
-                            FuturisticButton(
-                                text = "Create Another Quiz",
-                                onClick = { currentQuiz = null },
-                                modifier = Modifier.fillMaxWidth(),
-                                testTag = "restart_quiz_btn"
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    // Review All Questions
-                    Text(
-                        text = "QUESTION BY QUESTION REVIEW",
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            color = TextMuted,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 1.sp,
-                            fontSize = 10.sp
-                        )
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    session.questions.forEachIndexed { qIdx, question ->
-                        GlassmorphicCard(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 6.dp),
-                            borderColor = if (question.isCorrect) ZoyaEmerald.copy(alpha = 0.4f) else ZoyaCoral.copy(alpha = 0.4f)
-                        ) {
-                            Column(modifier = Modifier.padding(14.dp)) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = "Q${qIdx + 1} • ${question.type.displayName}",
-                                        style = MaterialTheme.typography.labelSmall.copy(
-                                            color = ZoyaCyanBright,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                    )
-                                    Box(
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(8.dp))
-                                            .background(if (question.isCorrect) ZoyaEmeraldGlass else ZoyaCoral.copy(alpha = 0.2f))
-                                            .padding(horizontal = 8.dp, vertical = 3.dp)
-                                    ) {
-                                        Text(
-                                            text = if (question.isCorrect) "CORRECT" else "MISSED",
-                                            style = MaterialTheme.typography.labelSmall.copy(
-                                                color = if (question.isCorrect) ZoyaEmerald else ZoyaCoral,
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 9.sp
-                                            )
-                                        )
-                                    }
-                                }
-                                Spacer(modifier = Modifier.height(6.dp))
-                                Text(
-                                    text = question.question,
-                                    style = MaterialTheme.typography.bodyMedium.copy(
-                                        color = TextPrimary,
-                                        fontWeight = FontWeight.Medium
-                                    )
-                                )
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text(
-                                    text = "Explanation: ${question.explanation}",
-                                    style = MaterialTheme.typography.bodySmall.copy(
-                                        color = TextSecondary,
-                                        fontSize = 12.sp,
-                                        lineHeight = 16.sp
-                                    )
-                                )
-                                if (question.mistakeAnalysis.isNotBlank()) {
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    Text(
-                                        text = "Mistake Note: ${question.mistakeAnalysis}",
-                                        style = MaterialTheme.typography.bodySmall.copy(
-                                            color = ZoyaAmber,
-                                            fontSize = 11.5.sp
-                                        )
-                                    )
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    // ==================== ACTIVE QUIZ QUESTION ====================
-                    val q = session.questions[currentIndex]
-
-                    // Top Bar Indicator
+                        .background(NovaDarkElevated)
+                        .border(1.dp, NovaBorderGlow)
+                        .padding(horizontal = 16.dp, vertical = 10.dp)
+                ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(NovaDarkElevated)
-                                    .border(1.dp, ZoyaCyan.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
-                                    .padding(horizontal = 8.dp, vertical = 4.dp)
-                            ) {
-                                Text(
-                                    text = "Q ${currentIndex + 1} of ${session.questions.size}",
-                                    style = MaterialTheme.typography.labelSmall.copy(
-                                        color = ZoyaCyanBright,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(ZoyaPurpleGlass)
-                                    .padding(horizontal = 8.dp, vertical = 4.dp)
-                            ) {
-                                Text(
-                                    text = q.type.displayName,
-                                    style = MaterialTheme.typography.labelSmall.copy(
-                                        color = ZoyaVioletBright,
-                                        fontSize = 10.sp
-                                    )
-                                )
-                            }
-                        }
-
                         // Score Pill
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(ZoyaEmeraldGlass)
-                                .border(1.dp, ZoyaEmerald.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
-                                .padding(horizontal = 10.dp, vertical = 4.dp)
-                        ) {
-                            Text(
-                                text = "Score: $score",
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    color = ZoyaEmerald,
-                                    fontWeight = FontWeight.Bold
-                                )
+                        StatBadge("SCORE", score.toString(), ZoyaCyanBright)
+                        StatBadge("CORRECT", correctCount.toString(), ZoyaEmerald)
+                        StatBadge("WRONG", wrongCount.toString(), ZoyaCoral)
+                        StatBadge("ATTEMPTED", attemptedCount.toString(), ZoyaAmber)
+                        StatBadge("QUESTION", "$currentQNum / $totalQuestions", TextPrimary)
+                    }
+                }
+            }
+
+            // MAIN CONTENT
+            if (currentQuiz == null) {
+                // QUIZ CONFIGURATOR & LAUNCHER
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 20.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    GlassmorphicCard(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.dp, ZoyaPurpleGlass, RoundedCornerShape(20.dp))
+                    ) {
+                        Column(modifier = Modifier.padding(20.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(44.dp)
+                                        .background(ZoyaPurpleGlass, RoundedCornerShape(12.dp)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.SportsEsports,
+                                        contentDescription = "Quiz",
+                                        tint = ZoyaVioletBright,
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column {
+                                    Text(
+                                        text = "Active AI Recall Challenge",
+                                        fontSize = 16.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = TextPrimary
+                                    )
+                                    Text(
+                                        text = "Instant scoring, animated feedback & weak area analysis",
+                                        fontSize = 12.sp,
+                                        color = TextSecondary
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(16.dp))
+
+                            OutlinedTextField(
+                                value = topicInput,
+                                onValueChange = { topicInput = it },
+                                placeholder = { Text("Enter Topic or Chapter...") },
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = ZoyaVioletBright,
+                                    unfocusedBorderColor = NovaBorderGlow,
+                                    focusedTextColor = TextPrimary,
+                                    unfocusedTextColor = TextPrimary
+                                ),
+                                shape = RoundedCornerShape(12.dp),
+                                singleLine = true
                             )
+
+                            Spacer(modifier = Modifier.height(14.dp))
+
+                            // Difficulty
+                            Text(text = "DIFFICULTY", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = TextMuted)
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                difficulties.forEach { diff ->
+                                    val isSel = diff == selectedDifficulty
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(if (isSel) ZoyaVioletBright else NovaDarkElevated)
+                                            .clickable { selectedDifficulty = diff }
+                                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                                    ) {
+                                        Text(
+                                            text = diff,
+                                            fontSize = 12.sp,
+                                            fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal,
+                                            color = if (isSel) NovaObsidian else TextSecondary
+                                        )
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(12.dp))
+
+                            // Question Count
+                            Text(text = "QUESTIONS", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = TextMuted)
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                questionCounts.forEach { count ->
+                                    val isSel = count == selectedQuestionCount
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(if (isSel) ZoyaVioletBright else NovaDarkElevated)
+                                            .clickable { selectedQuestionCount = count }
+                                            .padding(horizontal = 14.dp, vertical = 6.dp)
+                                    ) {
+                                        Text(
+                                            text = "$count Qs",
+                                            fontSize = 12.sp,
+                                            fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal,
+                                            color = if (isSel) NovaObsidian else TextSecondary
+                                        )
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(18.dp))
+
+                            Button(
+                                onClick = { startQuiz(topicInput) },
+                                enabled = topicInput.isNotBlank() && !isLoading,
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = ButtonDefaults.buttonColors(containerColor = ZoyaVioletBright),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                if (isLoading) {
+                                    CircularProgressIndicator(modifier = Modifier.size(20.dp), color = NovaObsidian, strokeWidth = 2.dp)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Generating Questions...", color = NovaObsidian, fontWeight = FontWeight.Bold)
+                                } else {
+                                    Text("START QUIZ ARENA", color = NovaObsidian, fontWeight = FontWeight.Black, fontSize = 14.sp)
+                                }
+                            }
                         }
+                    }
+
+                    if (errorMessage != null) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(text = errorMessage!!, color = ZoyaCoral, fontSize = 12.sp)
+                    }
+
+                    Spacer(modifier = Modifier.height(24.dp))
+
+                    Text(
+                        text = "QUICK TOPICS FOR ${currentProfile.subject.uppercase()}",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = TextMuted,
+                        letterSpacing = 1.sp
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        quickTopics.forEach { top ->
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(NovaDarkElevated)
+                                    .border(1.dp, NovaBorderGlow, RoundedCornerShape(10.dp))
+                                    .clickable {
+                                        topicInput = top
+                                        startQuiz(top)
+                                    }
+                                    .padding(horizontal = 12.dp, vertical = 8.dp)
+                            ) {
+                                Text(text = top, fontSize = 12.sp, color = TextPrimary)
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(30.dp))
+                }
+            } else if (quizFinished) {
+                // QUIZ RESULT SCREEN
+                val totalQ = currentQuiz!!.questions.size
+                val accuracy = if (totalQ > 0) ((correctCount.toFloat() / totalQ.toFloat()) * 100).toInt() else 0
+
+                val weakTopics = currentQuiz!!.questions
+                    .filter { !it.isCorrect }
+                    .map { it.weakConcept.ifBlank { it.question.take(30) } }
+                    .distinct()
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(20.dp)
+                        .verticalScroll(rememberScrollState()),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Box(
+                        modifier = Modifier
+                            .size(70.dp)
+                            .background(if (accuracy >= 60) ZoyaEmeraldGlass else ZoyaAmberGlass, CircleShape)
+                            .border(2.dp, if (accuracy >= 60) ZoyaEmerald else ZoyaAmber, CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.EmojiEvents,
+                            contentDescription = "Trophy",
+                            tint = if (accuracy >= 60) ZoyaEmerald else ZoyaAmber,
+                            modifier = Modifier.size(36.dp)
+                        )
                     }
 
                     Spacer(modifier = Modifier.height(14.dp))
 
-                    // Question Box
+                    Text(
+                        text = if (accuracy >= 80) "Mastery Achieved!" else if (accuracy >= 50) "Good Effort!" else "Revision Recommended",
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Black,
+                        color = TextPrimary
+                    )
+
+                    Text(
+                        text = "${currentQuiz!!.topic} • ${currentProfile.boardName}",
+                        fontSize = 13.sp,
+                        color = TextCyanSub
+                    )
+
+                    Spacer(modifier = Modifier.height(20.dp))
+
+                    // Stats Scorecard
                     GlassmorphicCard(
-                        modifier = Modifier.fillMaxWidth(),
-                        borderColor = ZoyaCyan.copy(alpha = 0.3f),
-                        cornerRadius = 18.dp
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.dp, NovaBorderGlow, RoundedCornerShape(16.dp))
                     ) {
                         Column(modifier = Modifier.padding(18.dp)) {
-                            Text(
-                                text = q.question,
-                                style = MaterialTheme.typography.titleMedium.copy(
-                                    color = TextPrimary,
-                                    fontWeight = FontWeight.SemiBold,
-                                    lineHeight = 22.sp,
-                                    fontSize = 15.5.sp
-                                )
-                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceAround
+                            ) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text(text = "$score / $totalQ", fontSize = 22.sp, fontWeight = FontWeight.Black, color = ZoyaCyanBright)
+                                    Text(text = "Final Score", fontSize = 11.sp, color = TextMuted)
+                                }
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text(text = "$accuracy%", fontSize = 22.sp, fontWeight = FontWeight.Black, color = if (accuracy >= 60) ZoyaEmerald else ZoyaAmber)
+                                    Text(text = "Accuracy", fontSize = 11.sp, color = TextMuted)
+                                }
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text(text = "$wrongCount", fontSize = 22.sp, fontWeight = FontWeight.Black, color = ZoyaCoral)
+                                    Text(text = "Incorrect", fontSize = 11.sp, color = TextMuted)
+                                }
+                            }
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(14.dp))
+                    if (weakTopics.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(20.dp))
+                        Text(
+                            text = "TOPICS NEEDING REINFORCEMENT",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = ZoyaAmber,
+                            letterSpacing = 1.sp
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
 
-                    // ==================== INTERACTION AREA BY QUESTION TYPE ====================
-                    when (q.type) {
-                        QuestionType.MULTIPLE_CHOICE -> {
-                            q.options.forEachIndexed { optIdx, optText ->
-                                val isSelected = q.selectedIndex == optIdx
-                                val isCorrect = optIdx == q.correctIndex
-                                val borderCol = when {
-                                    q.answered && isCorrect -> ZoyaEmerald
-                                    q.answered && isSelected && !isCorrect -> ZoyaCoral
-                                    isSelected -> ZoyaVioletBright
-                                    else -> NovaBorderGlow
-                                }
-                                val bgCol = when {
-                                    q.answered && isCorrect -> ZoyaEmeraldGlass
-                                    q.answered && isSelected && !isCorrect -> ZoyaCoral.copy(alpha = 0.15f)
-                                    isSelected -> ZoyaViolet.copy(alpha = 0.15f)
-                                    else -> NovaDarkElevated
-                                }
-
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+                            weakTopics.forEach { weak ->
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(vertical = 5.dp)
-                                        .clip(RoundedCornerShape(14.dp))
-                                        .background(bgCol)
-                                        .border(if (q.answered && (isCorrect || isSelected)) 1.5.dp else 1.dp, borderCol, RoundedCornerShape(14.dp))
-                                        .clickable(enabled = !q.answered) {
-                                            q.selectedIndex = optIdx
-                                            q.answered = true
-                                            q.isCorrect = (optIdx == q.correctIndex)
-                                            if (q.isCorrect) score++
-                                        }
-                                        .padding(14.dp)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(NovaDarkElevated)
+                                        .border(1.dp, ZoyaAmberGlass, RoundedCornerShape(10.dp))
+                                        .padding(12.dp)
                                 ) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
-                                        val letter = when (optIdx) {
-                                            0 -> "A"
-                                            1 -> "B"
-                                            2 -> "C"
-                                            else -> "D"
-                                        }
-                                        Box(
-                                            modifier = Modifier
-                                                .size(28.dp)
-                                                .clip(CircleShape)
-                                                .background(
-                                                    if (q.answered && isCorrect) ZoyaEmerald else NovaCardGlass
-                                                ),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Text(
-                                                text = letter,
-                                                style = MaterialTheme.typography.labelSmall.copy(
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = if (q.answered && isCorrect) NovaObsidian else TextPrimary
-                                                )
-                                            )
-                                        }
-                                        Spacer(modifier = Modifier.width(12.dp))
-                                        Text(
-                                            text = optText,
-                                            style = MaterialTheme.typography.bodyMedium.copy(
-                                                color = TextPrimary,
-                                                fontSize = 13.5.sp
-                                            )
-                                        )
-                                    }
-                                }
-                            }
-                        }
-
-                        QuestionType.TRUE_FALSE -> {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                listOf("True" to 0, "False" to 1).forEach { (label, idx) ->
-                                    val isSelected = q.selectedIndex == idx
-                                    val isCorrect = idx == q.correctIndex
-                                    val borderCol = when {
-                                        q.answered && isCorrect -> ZoyaEmerald
-                                        q.answered && isSelected && !isCorrect -> ZoyaCoral
-                                        isSelected -> ZoyaCyan
-                                        else -> NovaBorderGlow
-                                    }
-                                    val bgCol = when {
-                                        q.answered && isCorrect -> ZoyaEmeraldGlass
-                                        q.answered && isSelected && !isCorrect -> ZoyaCoral.copy(alpha = 0.15f)
-                                        isSelected -> ZoyaCyanGlass
-                                        else -> NovaDarkElevated
-                                    }
-
-                                    Box(
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .clip(RoundedCornerShape(16.dp))
-                                            .background(bgCol)
-                                            .border(1.5.dp, borderCol, RoundedCornerShape(16.dp))
-                                            .clickable(enabled = !q.answered) {
-                                                q.selectedIndex = idx
-                                                q.answered = true
-                                                q.isCorrect = (idx == q.correctIndex)
-                                                if (q.isCorrect) score++
-                                            }
-                                            .padding(vertical = 18.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Icon(
-                                                imageVector = if (idx == 0) Icons.Default.Done else Icons.Default.Close,
-                                                contentDescription = null,
-                                                tint = if (idx == 0) ZoyaEmerald else ZoyaCoral,
-                                                modifier = Modifier.size(18.dp)
-                                            )
-                                            Spacer(modifier = Modifier.width(8.dp))
-                                            Text(
-                                                text = label,
-                                                style = MaterialTheme.typography.titleSmall.copy(
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = TextPrimary,
-                                                    fontSize = 15.sp
-                                                )
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        QuestionType.FILL_IN_BLANKS -> {
-                            if (!q.answered) {
-                                Column(modifier = Modifier.fillMaxWidth()) {
-                                    OutlinedTextField(
-                                        value = textAnswerInput,
-                                        onValueChange = { textAnswerInput = it },
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .testTag("fill_in_blank_input"),
-                                        placeholder = {
-                                            Text("Type the missing term or formula here...", color = TextMuted, fontSize = 13.sp)
-                                        },
-                                        colors = OutlinedTextFieldDefaults.colors(
-                                            focusedBorderColor = ZoyaCyan,
-                                            unfocusedBorderColor = NovaBorderGlow,
-                                            focusedContainerColor = NovaDarkElevated,
-                                            unfocusedContainerColor = NovaDarkElevated,
-                                            focusedTextColor = TextPrimary,
-                                            unfocusedTextColor = TextPrimary
-                                        ),
-                                        shape = RoundedCornerShape(14.dp),
-                                        singleLine = true,
-                                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                                        keyboardActions = KeyboardActions(onDone = { submitFillInBlank(q) })
-                                    )
-                                    Spacer(modifier = Modifier.height(10.dp))
-                                    FuturisticButton(
-                                        text = "Check Answer",
-                                        onClick = { submitFillInBlank(q) },
-                                        enabled = textAnswerInput.isNotBlank(),
-                                        modifier = Modifier.fillMaxWidth(),
-                                        testTag = "submit_blank_btn"
-                                    )
-                                }
-                            } else {
-                                GlassmorphicCard(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    borderColor = if (q.isCorrect) ZoyaEmerald else ZoyaCoral
-                                ) {
-                                    Column(modifier = Modifier.padding(14.dp)) {
-                                        Text(
-                                            text = "Your Answer: ${q.userTextAnswer}",
-                                            style = MaterialTheme.typography.bodyMedium.copy(color = TextPrimary)
-                                        )
-                                        if (!q.isCorrect) {
-                                            Spacer(modifier = Modifier.height(4.dp))
-                                            Text(
-                                                text = "Expected: ${q.correctAnswerText}",
-                                                style = MaterialTheme.typography.bodyMedium.copy(color = ZoyaEmerald, fontWeight = FontWeight.Bold)
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        QuestionType.SHORT_ANSWER -> {
-                            if (!q.answered) {
-                                Column(modifier = Modifier.fillMaxWidth()) {
-                                    OutlinedTextField(
-                                        value = textAnswerInput,
-                                        onValueChange = { textAnswerInput = it },
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(110.dp)
-                                            .testTag("short_answer_input"),
-                                        placeholder = {
-                                            Text("Explain the concept or mechanism concisely...", color = TextMuted, fontSize = 13.sp)
-                                        },
-                                        colors = OutlinedTextFieldDefaults.colors(
-                                            focusedBorderColor = ZoyaVioletBright,
-                                            unfocusedBorderColor = NovaBorderGlow,
-                                            focusedContainerColor = NovaDarkElevated,
-                                            unfocusedContainerColor = NovaDarkElevated,
-                                            focusedTextColor = TextPrimary,
-                                            unfocusedTextColor = TextPrimary
-                                        ),
-                                        shape = RoundedCornerShape(14.dp),
-                                        maxLines = 4
-                                    )
-                                    Spacer(modifier = Modifier.height(10.dp))
-                                    FuturisticButton(
-                                        text = if (isEvaluatingShortAnswer) "Zoya is evaluating response..." else "Submit for AI Evaluation",
-                                        onClick = { submitShortAnswer(q) },
-                                        enabled = !isEvaluatingShortAnswer && textAnswerInput.isNotBlank(),
-                                        modifier = Modifier.fillMaxWidth(),
-                                        testTag = "submit_short_answer_btn"
-                                    )
-                                }
-                            } else {
-                                GlassmorphicCard(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    borderColor = if (q.isCorrect) ZoyaEmerald else ZoyaAmber
-                                ) {
-                                    Column(modifier = Modifier.padding(14.dp)) {
-                                        Text(
-                                            text = "Your Answer: \"${q.userTextAnswer}\"",
-                                            style = MaterialTheme.typography.bodyMedium.copy(color = TextPrimary, fontStyle = FontStyle.Italic)
-                                        )
-                                        if (q.evaluationFeedback.isNotBlank()) {
-                                            Spacer(modifier = Modifier.height(4.dp))
-                                            Text(
-                                                text = "Zoya Evaluation: ${q.evaluationFeedback}",
-                                                style = MaterialTheme.typography.labelSmall.copy(color = if (q.isCorrect) ZoyaEmerald else ZoyaAmber, fontWeight = FontWeight.Bold)
-                                            )
-                                        }
+                                        Icon(Icons.Outlined.Warning, contentDescription = "Weak", tint = ZoyaAmber, modifier = Modifier.size(18.dp))
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(text = weak, fontSize = 12.sp, color = TextPrimary)
                                     }
                                 }
                             }
                         }
                     }
 
-                    // ==================== ZOYA'S POST-ANSWER FEEDBACK (MANDATORY REQUIREMENT) ====================
-                    if (q.answered) {
-                        Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(26.dp))
 
-                        GlassmorphicCard(
-                            modifier = Modifier.fillMaxWidth(),
-                            borderColor = if (q.isCorrect) ZoyaEmerald.copy(alpha = 0.5f) else ZoyaCoral.copy(alpha = 0.5f),
-                            cornerRadius = 20.dp
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Button(
+                            onClick = { startQuiz(currentQuiz!!.topic) },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(containerColor = ZoyaVioletBright),
+                            shape = RoundedCornerShape(12.dp)
                         ) {
-                            Column(modifier = Modifier.padding(16.dp)) {
-                                // Status & Audio Header
+                            Icon(Icons.Default.Refresh, contentDescription = "Retry", tint = NovaObsidian)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Retry Quiz", color = NovaObsidian, fontWeight = FontWeight.Bold)
+                        }
+
+                        Button(
+                            onClick = {
+                                if (weakTopics.isNotEmpty()) {
+                                    startQuiz(weakTopics.first())
+                                } else {
+                                    startQuiz(currentQuiz!!.topic)
+                                }
+                            },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(containerColor = ZoyaCyanGlass),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text("Practice Weak Areas", color = ZoyaCyanBright, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(30.dp))
+                }
+            } else {
+                // ACTIVE QUESTION SLIDER
+                val questions = currentQuiz!!.questions
+                val question = questions[currentIndex]
+
+                AnimatedContent(
+                    targetState = currentIndex,
+                    transitionSpec = {
+                        slideInHorizontally { width -> width } + fadeIn() togetherWith
+                                slideOutHorizontally { width -> -width } + fadeOut()
+                    },
+                    label = "quiz_slide"
+                ) { qIndex ->
+                    val curQ = questions[qIndex]
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(20.dp)
+                            .verticalScroll(rememberScrollState())
+                    ) {
+                        // Question Card
+                        GlassmorphicCard(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .border(1.dp, NovaBorderGlow, RoundedCornerShape(18.dp))
+                        ) {
+                            Column(modifier = Modifier.padding(18.dp)) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(24.dp)
-                                                .clip(CircleShape)
-                                                .background(if (q.isCorrect) ZoyaEmerald else ZoyaCoral),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Icon(
-                                                imageVector = if (q.isCorrect) Icons.Default.Check else Icons.Default.Close,
-                                                contentDescription = null,
-                                                tint = NovaObsidian,
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                        }
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Text(
-                                            text = if (q.isCorrect) "CORRECT!" else "INCORRECT / NEEDS WORK",
-                                            style = MaterialTheme.typography.titleSmall.copy(
-                                                color = if (q.isCorrect) ZoyaEmerald else ZoyaCoral,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                        )
-                                    }
-
-                                    // Voice read button
-                                    IconButton(
-                                        onClick = {
-                                            val speechText = "Here is the explanation for this question. ${q.explanation}. ${q.mistakeAnalysis}. Make sure to review the concept of ${q.weakConcept}."
-                                            onSpeakText(speechText)
-                                        },
-                                        modifier = Modifier
-                                            .size(36.dp)
-                                            .clip(CircleShape)
-                                            .background(ZoyaCyanGlass)
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.VolumeUp,
-                                            contentDescription = "Listen to Zoya",
-                                            tint = ZoyaCyanBright,
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                    }
-                                }
-
-                                Spacer(modifier = Modifier.height(10.dp))
-
-                                // Section 1: Zoya's Explanation of Correctness
-                                Column(modifier = Modifier.fillMaxWidth()) {
                                     Text(
-                                        text = "ZOYA'S CONCEPTUAL EXPLANATION",
-                                        style = MaterialTheme.typography.labelSmall.copy(
-                                            color = ZoyaCyanBright,
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 9.5.sp,
-                                            letterSpacing = 0.8.sp
-                                        )
+                                        text = curQ.type.displayName.uppercase(),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = ZoyaCyanBright,
+                                        letterSpacing = 1.sp
                                     )
-                                    Spacer(modifier = Modifier.height(4.dp))
                                     Text(
-                                        text = q.explanation,
-                                        style = MaterialTheme.typography.bodyMedium.copy(
-                                            color = TextPrimary,
-                                            fontSize = 13.sp,
-                                            lineHeight = 18.sp
-                                        )
+                                        text = "${curQ.weakConcept}",
+                                        fontSize = 11.sp,
+                                        color = TextMuted,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
                                     )
                                 }
 
-                                // Section 2: Mistake Elaboration
-                                if (q.mistakeAnalysis.isNotBlank()) {
-                                    Spacer(modifier = Modifier.height(10.dp))
-                                    Column(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clip(RoundedCornerShape(10.dp))
-                                            .background(NovaDarkSurface)
-                                            .padding(10.dp)
-                                    ) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Icon(
-                                                imageVector = Icons.Outlined.Warning,
-                                                contentDescription = null,
-                                                tint = ZoyaAmber,
-                                                modifier = Modifier.size(14.dp)
-                                            )
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Text(
-                                                text = "COMMON MISTAKES & TRAPS ELABORATION",
-                                                style = MaterialTheme.typography.labelSmall.copy(
-                                                    color = ZoyaAmber,
-                                                    fontWeight = FontWeight.Bold,
-                                                    fontSize = 9.sp,
-                                                    letterSpacing = 0.5.sp
-                                                )
-                                            )
-                                        }
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        Text(
-                                            text = q.mistakeAnalysis,
-                                            style = MaterialTheme.typography.bodySmall.copy(
-                                                color = TextSecondary,
-                                                fontSize = 12.sp,
-                                                lineHeight = 16.sp
-                                            )
-                                        )
-                                    }
-                                }
+                                Spacer(modifier = Modifier.height(12.dp))
 
-                                // Section 3: Weak Concept Identification
-                                if (q.weakConcept.isNotBlank()) {
-                                    Spacer(modifier = Modifier.height(10.dp))
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clip(RoundedCornerShape(8.dp))
-                                            .background(ZoyaPurpleGlass)
-                                            .border(1.dp, ZoyaViolet.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
-                                            .padding(horizontal = 10.dp, vertical = 6.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Psychology,
-                                            contentDescription = null,
-                                            tint = ZoyaVioletBright,
-                                            modifier = Modifier.size(14.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Text(
-                                            text = "Weak Concept to Focus On: ${q.weakConcept}",
-                                            style = MaterialTheme.typography.labelSmall.copy(
-                                                color = TextPrimary,
-                                                fontWeight = FontWeight.Medium,
-                                                fontSize = 11.sp
-                                            )
-                                        )
-                                    }
-                                }
+                                Text(
+                                    text = curQ.question,
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = TextPrimary,
+                                    lineHeight = 22.sp
+                                )
                             }
                         }
 
                         Spacer(modifier = Modifier.height(16.dp))
 
-                        // Next Question or Finish Button
-                        FuturisticButton(
-                            text = if (currentIndex < session.questions.size - 1) "Next Question" else "View Diagnostic Report",
-                            onClick = {
-                                textAnswerInput = ""
-                                if (currentIndex < session.questions.size - 1) {
-                                    currentIndex++
-                                } else {
-                                    quizFinished = true
-                                    scope.launch {
-                                        repository.recordQuizSession(session)
-                                        repository.logSession(
-                                            topic = session.topic,
-                                            mode = "Quiz Arena",
-                                            summary = "Score: $score / ${session.questions.size} (${session.difficulty})",
-                                            durationSec = 200
-                                        )
+                        // Options / Answer area
+                        if (curQ.type == QuestionType.MULTIPLE_CHOICE || curQ.type == QuestionType.TRUE_FALSE) {
+                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                curQ.options.forEachIndexed { optIdx, optText ->
+                                    val isSelected = selectedOptionIndex == optIdx
+                                    val isCorrectOpt = optIdx == curQ.correctIndex
+
+                                    val bg = when {
+                                        isAnswerLocked && isCorrectOpt -> ZoyaEmeraldGlass
+                                        isAnswerLocked && isSelected && !isCorrectOpt -> ZoyaCoral.copy(alpha = 0.25f)
+                                        else -> NovaDarkElevated
+                                    }
+
+                                    val borderCol = when {
+                                        isAnswerLocked && isCorrectOpt -> ZoyaEmerald
+                                        isAnswerLocked && isSelected && !isCorrectOpt -> ZoyaCoral
+                                        else -> NovaBorderGlow
+                                    }
+
+                                    val textCol = when {
+                                        isAnswerLocked && isCorrectOpt -> ZoyaEmerald
+                                        isAnswerLocked && isSelected && !isCorrectOpt -> ZoyaCoral
+                                        else -> TextPrimary
+                                    }
+
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(14.dp))
+                                            .background(bg)
+                                            .border(1.dp, borderCol, RoundedCornerShape(14.dp))
+                                            .clickable(enabled = !isAnswerLocked) {
+                                                handleOptionSelected(curQ, optIdx)
+                                            }
+                                            .padding(16.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.weight(1f),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(28.dp)
+                                                        .background(if (isAnswerLocked && isCorrectOpt) ZoyaEmerald else NovaDarkSurface, CircleShape)
+                                                        .border(1.dp, borderCol, CircleShape),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Text(
+                                                        text = ('A' + optIdx).toString(),
+                                                        fontSize = 12.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = if (isAnswerLocked && isCorrectOpt) NovaObsidian else textCol
+                                                    )
+                                                }
+                                                Spacer(modifier = Modifier.width(12.dp))
+                                                Text(
+                                                    text = optText,
+                                                    fontSize = 14.sp,
+                                                    color = textCol,
+                                                    fontWeight = if (isSelected || (isAnswerLocked && isCorrectOpt)) FontWeight.Bold else FontWeight.Normal
+                                                )
+                                            }
+
+                                            if (isAnswerLocked && isCorrectOpt) {
+                                                Icon(Icons.Default.Check, contentDescription = "Correct", tint = ZoyaEmerald)
+                                            } else if (isAnswerLocked && isSelected && !isCorrectOpt) {
+                                                Icon(Icons.Default.Close, contentDescription = "Wrong", tint = ZoyaCoral)
+                                            }
+                                        }
                                     }
                                 }
-                            },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("next_quiz_q_btn")
-                        )
+                            }
+                        } else {
+                            // Text-based Question (Fill in blanks / Short answer)
+                            Column {
+                                OutlinedTextField(
+                                    value = textAnswerInput,
+                                    onValueChange = { textAnswerInput = it },
+                                    placeholder = { Text("Type your answer here...") },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    enabled = !isAnswerLocked,
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedBorderColor = ZoyaCyan,
+                                        unfocusedBorderColor = NovaBorderGlow,
+                                        focusedTextColor = TextPrimary,
+                                        unfocusedTextColor = TextPrimary
+                                    ),
+                                    shape = RoundedCornerShape(12.dp)
+                                )
+
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                Button(
+                                    onClick = {
+                                        if (textAnswerInput.isNotBlank() && !isAnswerLocked) {
+                                            isAnswerLocked = true
+                                            isEvaluatingShortAnswer = true
+                                            focusManager.clearFocus()
+                                            scope.launch {
+                                                val eval = repository.evaluateShortAnswer(curQ.question, curQ.correctAnswerText, textAnswerInput)
+                                                isEvaluatingShortAnswer = false
+                                                attemptedCount++
+                                                eval.onSuccess { res ->
+                                                    if (res.isCorrect) {
+                                                        score++
+                                                        correctCount++
+                                                        isFeedbackCorrect = true
+                                                        feedbackMessage = "Correct! ${res.explanation}"
+                                                    } else {
+                                                        wrongCount++
+                                                        isFeedbackCorrect = false
+                                                        feedbackMessage = "Incorrect. Expected: ${curQ.correctAnswerText}\nWhy? ${res.explanation}"
+                                                    }
+                                                    showFeedback = true
+                                                }.onFailure {
+                                                    // Fallback check
+                                                    val simpleMatch = textAnswerInput.trim().equals(curQ.correctAnswerText.trim(), true)
+                                                    if (simpleMatch) {
+                                                        score++
+                                                        correctCount++
+                                                        isFeedbackCorrect = true
+                                                        feedbackMessage = "Correct! Great recall."
+                                                    } else {
+                                                        wrongCount++
+                                                        isFeedbackCorrect = false
+                                                        feedbackMessage = "Expected answer: ${curQ.correctAnswerText}\n${curQ.explanation}"
+                                                    }
+                                                    showFeedback = true
+                                                }
+                                            }
+                                        }
+                                    },
+                                    enabled = textAnswerInput.isNotBlank() && !isAnswerLocked,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = ButtonDefaults.buttonColors(containerColor = ZoyaCyan),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    if (isEvaluatingShortAnswer) {
+                                        CircularProgressIndicator(modifier = Modifier.size(18.dp), color = NovaObsidian, strokeWidth = 2.dp)
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text("Evaluating...", color = NovaObsidian)
+                                    } else {
+                                        Text("SUBMIT ANSWER", color = NovaObsidian, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
+                        }
+
+                        // FEEDBACK CARD (Animated visibility)
+                        AnimatedVisibility(visible = showFeedback) {
+                            Column(modifier = Modifier.padding(top = 16.dp)) {
+                                GlassmorphicCard(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .border(
+                                            1.dp,
+                                            if (isFeedbackCorrect) ZoyaEmerald else ZoyaCoral,
+                                            RoundedCornerShape(16.dp)
+                                        )
+                                ) {
+                                    Column(modifier = Modifier.padding(16.dp)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(
+                                                imageVector = if (isFeedbackCorrect) Icons.Default.Check else Icons.Default.Close,
+                                                contentDescription = "Status",
+                                                tint = if (isFeedbackCorrect) ZoyaEmerald else ZoyaCoral,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(
+                                                text = if (isFeedbackCorrect) "Correct!" else "Explanation",
+                                                fontSize = 14.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (isFeedbackCorrect) ZoyaEmerald else ZoyaCoral
+                                            )
+                                        }
+
+                                        Spacer(modifier = Modifier.height(6.dp))
+
+                                        Text(
+                                            text = feedbackMessage,
+                                            fontSize = 13.sp,
+                                            color = TextPrimary,
+                                            lineHeight = 18.sp
+                                        )
+
+                                        if (!isFeedbackCorrect) {
+                                            Spacer(modifier = Modifier.height(14.dp))
+                                            Button(
+                                                onClick = { handleNextAfterWrong() },
+                                                colors = ButtonDefaults.buttonColors(containerColor = ZoyaVioletBright),
+                                                shape = RoundedCornerShape(10.dp),
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) {
+                                                Text("CONTINUE TO NEXT QUESTION", color = NovaObsidian, fontWeight = FontWeight.Black)
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Next", tint = NovaObsidian)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(30.dp))
                     }
                 }
             }
-
-            Spacer(modifier = Modifier.height(40.dp))
         }
+    }
+}
+
+@Composable
+fun StatBadge(label: String, value: String, color: Color) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(text = label, fontSize = 9.sp, fontWeight = FontWeight.Bold, color = TextMuted)
+        Text(text = value, fontSize = 13.sp, fontWeight = FontWeight.Black, color = color)
     }
 }

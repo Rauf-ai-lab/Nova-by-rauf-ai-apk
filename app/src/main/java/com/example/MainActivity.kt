@@ -19,8 +19,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.example.domain.model.StudyMode
+import com.example.ui.screens.board.YourBoardScreen
 import com.example.ui.screens.main.MainStudyScreen
 import com.example.ui.screens.onboarding.ApiKeyOnboardingScreen
+import com.example.ui.screens.oneshot.OneShotLectureScreen
 import com.example.ui.screens.settings.SettingsScreen
 import com.example.ui.screens.study.ConceptExplainerSheet
 import com.example.ui.screens.study.FlashcardsScreen
@@ -45,6 +47,7 @@ class MainActivity : ComponentActivity() {
                     mutableStateOf(repository.hasValidApiKey() && repository.getApiKey().isNotBlank())
                 }
                 var currentMode by remember { mutableStateOf<StudyMode?>(null) }
+                var activeQuizTopic by remember { mutableStateOf("") }
 
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     BoxModifierWrapper(modifier = Modifier.padding(innerPadding)) {
@@ -74,6 +77,24 @@ class MainActivity : ComponentActivity() {
                                             currentMode = selected
                                         }
                                     )
+                                    StudyMode.YourBoard -> YourBoardScreen(
+                                        repository = repository,
+                                        onNavigateMode = { selected ->
+                                            currentMode = selected
+                                        },
+                                        onClose = { currentMode = null }
+                                    )
+                                    StudyMode.OneShotLecture -> OneShotLectureScreen(
+                                        repository = repository,
+                                        onClose = { currentMode = null },
+                                        onStartQuiz = { topic ->
+                                            activeQuizTopic = topic
+                                            currentMode = StudyMode.QuizArena
+                                        },
+                                        onNavigateMode = { selected ->
+                                            currentMode = selected
+                                        }
+                                    )
                                     StudyMode.ConceptExplainer -> ConceptExplainerSheet(
                                         repository = repository,
                                         onClose = { currentMode = null },
@@ -93,7 +114,8 @@ class MainActivity : ComponentActivity() {
                                         onClose = { currentMode = null },
                                         onSpeakText = { text ->
                                             liveSessionManager.audioPlayback.speakText(text)
-                                        }
+                                        },
+                                        initialTopic = activeQuizTopic
                                     )
                                     StudyMode.FlashcardDeck -> FlashcardsScreen(
                                         repository = repository,
@@ -139,4 +161,3 @@ fun BoxModifierWrapper(modifier: Modifier = Modifier, content: @Composable () ->
         content()
     }
 }
-

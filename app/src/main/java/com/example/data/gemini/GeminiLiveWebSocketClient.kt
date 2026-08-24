@@ -94,7 +94,7 @@ class GeminiLiveWebSocketClient(
                     )
                 ),
                 systemInstruction = RestContent(
-                    parts = listOf(RestPart(text = GeminiRestService.ZOYA_SYSTEM_PROMPT))
+                    parts = listOf(RestPart(text = GeminiRestService.buildSystemPrompt()))
                 )
             )
         )

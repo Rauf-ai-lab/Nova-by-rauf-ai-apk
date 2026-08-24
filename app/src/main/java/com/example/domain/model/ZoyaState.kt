@@ -16,5 +16,7 @@ enum class StudyMode(val title: String, val subtitle: String) {
     QuizArena("Quiz Arena", "Interactive recall challenge with AI feedback"),
     FlashcardDeck("Flashcards", "Active recall flip cards & mastery tracking"),
     QuickRevision("Rapid Revision", "Formulas, definitions & weak area drills"),
+    YourBoard("Your Board", "Your study space, built around your board"),
+    OneShotLecture("One-Shot Lectures", "Understand an entire chapter in one powerful study session"),
     Settings("System Settings", "API key, voice tuning & device tools")
 }

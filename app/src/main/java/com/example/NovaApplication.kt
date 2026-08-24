@@ -5,6 +5,7 @@ import com.example.ai.LiveSessionManager
 import com.example.data.gemini.GeminiRestService
 import com.example.data.local.AppDatabase
 import com.example.data.storage.SecureApiKeyStorage
+import com.example.data.storage.StudentProfileStorage
 import com.example.domain.repository.StudyRepository
 import com.example.domain.tools.DeviceToolsManager
 import kotlinx.coroutines.CoroutineScope
@@ -16,6 +17,9 @@ class NovaApplication : Application() {
     val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     lateinit var secureApiKeyStorage: SecureApiKeyStorage
+        private set
+
+    lateinit var studentProfileStorage: StudentProfileStorage
         private set
 
     lateinit var database: AppDatabase
@@ -37,9 +41,10 @@ class NovaApplication : Application() {
         super.onCreate()
 
         secureApiKeyStorage = SecureApiKeyStorage(this)
+        studentProfileStorage = StudentProfileStorage(this)
         database = AppDatabase.getDatabase(this)
         geminiRestService = GeminiRestService()
-        studyRepository = StudyRepository(database, secureApiKeyStorage, geminiRestService)
+        studyRepository = StudyRepository(database, secureApiKeyStorage, studentProfileStorage, geminiRestService)
         liveSessionManager = LiveSessionManager(this, applicationScope, studyRepository)
         deviceToolsManager = DeviceToolsManager(this)
     }

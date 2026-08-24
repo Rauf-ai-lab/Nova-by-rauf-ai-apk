@@ -7,22 +7,28 @@ import com.example.data.local.entity.QuizQuestionEntity
 import com.example.data.local.entity.RevisionTopicEntity
 import com.example.data.local.entity.StudySessionEntity
 import com.example.data.storage.SecureApiKeyStorage
+import com.example.data.storage.StudentProfileStorage
 import com.example.domain.model.ChatMessage
 import com.example.domain.model.ConceptExplanation
+import com.example.domain.model.ExamModePack
 import com.example.domain.model.FlashcardItem
+import com.example.domain.model.OneShotLecture
 import com.example.domain.model.QuestionType
 import com.example.domain.model.QuickRevisionGuide
 import com.example.domain.model.QuizSession
 import com.example.domain.model.ShortAnswerEvaluation
 import com.example.domain.model.Speaker
 import com.example.domain.model.StepByStepSolution
+import com.example.domain.model.StudentProfile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.withContext
 
 class StudyRepository(
     private val database: AppDatabase,
     private val secureStorage: SecureApiKeyStorage,
+    private val profileStorage: StudentProfileStorage,
     private val restService: GeminiRestService
 ) {
     // API Key operations
@@ -33,6 +39,11 @@ class StudyRepository(
     fun getMaskedApiKey(): String = secureStorage.getMaskedApiKey()
 
     suspend fun validateApiKey(apiKey: String): Result<Boolean> = restService.validateApiKey(apiKey)
+
+    // Student Profile & Board operations
+    val studentProfile: StateFlow<StudentProfile> = profileStorage.profileFlow
+    fun getCurrentProfile(): StudentProfile = profileStorage.getProfile()
+    fun updateStudentProfile(profile: StudentProfile) = profileStorage.updateProfile(profile)
 
     // Flashcard local operations
     val allFlashcards: Flow<List<FlashcardEntity>> = database.flashcardDao().getAllFlashcards()
@@ -54,14 +65,13 @@ class StudyRepository(
     suspend fun updateFlashcardMastery(cardId: Long, newMastery: Int) = withContext(Dispatchers.IO) {
         val entity = FlashcardEntity(
             id = cardId,
-            subject = "Study",
+            subject = getCurrentProfile().subject,
             topic = "General",
             frontQuestion = "",
             backAnswer = "",
             masteryLevel = newMastery,
             lastReviewedAt = System.currentTimeMillis()
         )
-        // Update mastery
         database.flashcardDao().updateFlashcard(entity)
     }
 
@@ -122,20 +132,20 @@ class StudyRepository(
         )
     }
 
-    // AI Study Generation
+    // AI Study Generation (Board-Aware)
     suspend fun askZoya(question: String, history: List<ChatMessage>): Result<String> {
         val mappedHistory = history.map {
             (if (it.sender == Speaker.USER) "user" else "model") to it.text
         }
-        return restService.chatWithZoya(getApiKey(), question, mappedHistory)
+        return restService.chatWithZoya(getApiKey(), question, mappedHistory, getCurrentProfile())
     }
 
     suspend fun explainConcept(topic: String, depthLevel: String): Result<ConceptExplanation> {
-        return restService.explainConcept(getApiKey(), topic, depthLevel)
+        return restService.explainConcept(getApiKey(), topic, depthLevel, getCurrentProfile())
     }
 
     suspend fun solveProblem(problem: String, subject: String): Result<StepByStepSolution> {
-        return restService.solveProblemStepByStep(getApiKey(), problem, subject)
+        return restService.solveProblemStepByStep(getApiKey(), problem, subject, getCurrentProfile())
     }
 
     suspend fun generateQuiz(
@@ -144,7 +154,7 @@ class StudyRepository(
         difficulty: String,
         questionTypeFilter: String = "All Types"
     ): Result<QuizSession> {
-        return restService.generateQuiz(getApiKey(), topic, count, difficulty, questionTypeFilter)
+        return restService.generateQuiz(getApiKey(), topic, count, difficulty, questionTypeFilter, getCurrentProfile())
     }
 
     suspend fun evaluateShortAnswer(
@@ -152,11 +162,11 @@ class StudyRepository(
         modelAnswer: String,
         studentAnswer: String
     ): Result<ShortAnswerEvaluation> {
-        return restService.evaluateShortAnswer(getApiKey(), question, modelAnswer, studentAnswer)
+        return restService.evaluateShortAnswer(getApiKey(), question, modelAnswer, studentAnswer, getCurrentProfile())
     }
 
     suspend fun generateFlashcards(topic: String, count: Int): Result<List<FlashcardItem>> {
-        val result = restService.generateFlashcards(getApiKey(), topic, count)
+        val result = restService.generateFlashcards(getApiKey(), topic, count, getCurrentProfile())
         result.onSuccess { cards ->
             cards.forEach { saveFlashcard(it) }
         }
@@ -164,8 +174,16 @@ class StudyRepository(
     }
 
     suspend fun generateRevision(topic: String): Result<QuickRevisionGuide> {
-        val result = restService.generateQuickRevision(getApiKey(), topic)
+        val result = restService.generateQuickRevision(getApiKey(), topic, getCurrentProfile())
         result.onSuccess { saveRevisionGuide(it) }
         return result
+    }
+
+    suspend fun generateOneShotLecture(chapterTopic: String): Result<OneShotLecture> {
+        return restService.generateOneShotLecture(getApiKey(), chapterTopic, getCurrentProfile())
+    }
+
+    suspend fun generateExamModePack(topic: String): Result<ExamModePack> {
+        return restService.generateExamModePack(getApiKey(), topic, getCurrentProfile())
     }
 }
