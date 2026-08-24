@@ -1,0 +1,6 @@
+{
+  "name": "Nova By Rauf",
+  "description": "Voice-First AI Study Companion featuring Zoya, with real-time academic concept explanations, step-by-step problem solving, interactive quizzes, and flashcards.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
